@@ -143,6 +143,29 @@ const GEOMETRY = {
     ballYFrac: 0.84,
     ballRadiusFrac: 0.034,
   },
+
+  // ── KEEPER'S-EYE VIEW (Keeper mode — owner decision 2026-06-27) ────────────
+  // A SECOND camera, used only in Keeper mode: we sit behind the keeper looking
+  // OUT at the pitch. The taker is far + small; the ball is kicked TOWARD us and
+  // GROWS. The "goal" we defend is the near foreground plane the ball arrives in,
+  // and (crucially) it is what we hand to resolvePenalty as the goal rect, so all
+  // the normalised-coord math is reused unchanged — only the pixels move.
+  // Fractions of the live screen; shared across orientations (tune by playtest).
+  keeperView: {
+    horizonYFrac: 0.22, // stadium/pitch split (far)
+    spotYFrac: 0.34, // far penalty spot = where the ball launches from
+    goalTopFrac: 0.4, // near goal plane: crossbar (top)
+    goalBottomFrac: 0.84, // near goal plane: ground line (bottom)
+    goalWidthFrac: 0.84, // near goal plane width / screen width
+    boxFarHalfFrac: 0.1, // perspective box half-width far (at horizon)
+    boxNearHalfFrac: 0.49, // perspective box half-width near (foreground)
+    keeperFeetYFrac: 0.92, // foreground keeper feet (big, near the camera)
+    keeperHeightFrac: 0.3, // foreground keeper height / screen height
+    keeperAspect: 0.45, // keeper width : height — width is DERIVED from height so the
+    //  figure stays human-proportioned in both orientations (≈ the taker-view keeper).
+    takerHeightFrac: 0.12, // far taker height / screen height (small)
+    takerAspect: 0.43, // far taker width : height
+  },
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,6 +265,8 @@ const CPU_TAKER = {
   powerMin: 0.55,
   powerMax: 0.95,
   curveJitter: 0.1, // small random bend (±) so flights are not all dead straight
+  onTargetInset: 0.08, // Keeper mode: clamp the CPU's landing this far inside the goal
+  //  so it stays on-target (the challenge is saving it, not the CPU spraying wide).
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -263,6 +288,11 @@ const KEEPER = {
   diveDuration: 360, // ms for the player-keeper's dive animation
   readyMs: 550, // a short "set" beat after the ball is placed, before the tell,
   //  so the next shot does not start the instant the previous one ends.
+
+  // Keeper's-eye flight: the ball launches small (far) and GROWS as it rushes the
+  // camera (the opposite of the taker view, which shrinks into the distance).
+  flightScaleStart: 0.3, // ball scale at the far spot
+  flightScaleEnd: 1.25, // ball scale as it reaches the near goal plane
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

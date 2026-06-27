@@ -39,7 +39,8 @@ build. Everything else in this file is context for that session.
   works in portrait and landscape (landscape is primary). Vercel-hosted PWA later.
 - **Done:** M1 scaffold/static scene, M2 swipe input + debug overlay, M3 ball
   flight, M4 Taker mode (CPU keeper) with a unified **geometric** `resolvePenalty`,
-  **M5 Keeper mode** (CPU taker + tell + human dive/timing), plus aesthetics
+  **M5 Keeper mode** (CPU taker + tell + human dive/timing, in a behind-the-keeper
+  camera where the ball grows toward you — `computeLayout(..,'keeper')`), plus aesthetics
   (Trionda ball, net shake on goal, celebratory banner, procedural crowd SFX).
   All feel values are in `src/config.ts`.
 - **Branch:** `claude/penalty-shootout-setup-9bs643` (develop + push here).

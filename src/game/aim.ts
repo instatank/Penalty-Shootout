@@ -104,7 +104,21 @@ export function finalizeShot(aim: Aim, swipe: SwipeSample, goal: Rect, seed: num
 export function cpuShot(targetZone: ZoneId, power: number, curve: number, goal: Rect, seed: number): TakerInput {
   const center = zoneCenter(targetZone, goal);
   const errorRadius = (CONFIG.INPUT.baseError + CONFIG.INPUT.kPower * power) * goal.width;
-  return landShot(center.x, center.y, errorRadius, targetZone, power, curve, goal, seed);
+  const shot = landShot(center.x, center.y, errorRadius, targetZone, power, curve, goal, seed);
+
+  // Keep the CPU on-target: clamp the landing inside the goal so it never sprays
+  // wide/over (in Keeper mode the player should have to SAVE every shot, not get
+  // gifted CPU misses). The near goal plane is short, so unclamped pixel scatter
+  // skies too many — this also makes the clamp aspect-independent.
+  const inset = CONFIG.CPU_TAKER.onTargetInset;
+  const nx = clamp(shot.landingNorm.x, inset, 1 - inset);
+  const ny = clamp(shot.landingNorm.y, inset, 1 - inset);
+  if (nx !== shot.landingNorm.x || ny !== shot.landingNorm.y) {
+    shot.landingNorm = { x: nx, y: ny };
+    shot.landingPoint = { x: goal.x + nx * goal.width, y: goal.y + ny * goal.height };
+    shot.landingZone = zoneAtPoint(shot.landingPoint.x, shot.landingPoint.y, goal);
+  }
+  return shot;
 }
 
 /**

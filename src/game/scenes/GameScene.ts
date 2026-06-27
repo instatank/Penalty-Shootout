@@ -230,6 +230,8 @@ export class GameScene extends Phaser.Scene {
     // Tear down any in-flight kick and let the loop restart with the new roles.
     this.epoch++;
     this.human.cancel();
+    // The camera changes with the mode, so rebuild the whole scene for the new view.
+    this.rebuild(this.scale.width, this.scale.height);
     this.enterAiming();
   }
 
@@ -399,11 +401,12 @@ export class GameScene extends Phaser.Scene {
       this.debug.setLines(['KEEPER MODE', 'read the striker…', 'swipe to dive']);
     });
 
-    // Strike → launch the flight (the dive window stays open through it).
+    // Strike → launch the flight (the dive window stays open through it). The ball
+    // grows as it rushes the camera (keeper's-eye), in front of everything.
     this.time.delayedCall(CONFIG.KEEPER.readyMs + C.tellLeadTime, () => {
       this.kickTakerFigure(tellSide);
       if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
-      void this.flyBall(start, end, bendPx, C.flightTime);
+      void this.flyBall(start, end, bendPx, C.flightTime, CONFIG.KEEPER.flightScaleStart, CONFIG.KEEPER.flightScaleEnd);
     });
 
     // Window close: hand the dive (or a "no dive") back to the loop. The small
@@ -424,8 +427,16 @@ export class GameScene extends Phaser.Scene {
 
   // ── Shared animation helpers ──────────────────────────────────────────────
   /** Fly the ball start→end over durationMs with the arc, curve, depth-scale and
-   *  spin used everywhere. Returns when the flight finishes. */
-  private flyBall(start: { x: number; y: number }, end: { x: number; y: number }, bendPx: number, durationMs: number): Promise<void> {
+   *  spin used everywhere. scaleStart/End default to the taker view (shrink into
+   *  the distance); the keeper view passes a growing scale (rushes the camera). */
+  private flyBall(
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    bendPx: number,
+    durationMs: number,
+    scaleStart: number = CONFIG.FLIGHT.scaleStart,
+    scaleEnd: number = CONFIG.FLIGHT.scaleEnd,
+  ): Promise<void> {
     const F = CONFIG.FLIGHT;
     const arcPx = this.scale.height * F.arcHeightFrac;
     const prog = { t: 0 };
@@ -439,7 +450,7 @@ export class GameScene extends Phaser.Scene {
         const x = start.x + (end.x - start.x) * t + bendPx * Math.sin(Math.PI * t);
         const y = start.y + (end.y - start.y) * t - arcPx * Math.sin(Math.PI * t);
         this.ball.setPosition(x, y);
-        this.ball.setScale(F.scaleStart + (F.scaleEnd - F.scaleStart) * t);
+        this.ball.setScale(scaleStart + (scaleEnd - scaleStart) * t);
         this.ball.setRotation(t * Math.PI * 2 * F.spinTurns);
       },
     });
@@ -626,26 +637,65 @@ export class GameScene extends Phaser.Scene {
     g.strokeCircle(p.x, p.y, r);
   }
 
-  /** Recompute the layout and redraw every STATIC pitch visual + reset actors. */
+  /** Recompute the layout and redraw every STATIC pitch visual + reset actors.
+   *  The camera follows the mode: Taker = behind the taker; Keeper = behind the
+   *  keeper looking out (the ball flies toward you). */
   private rebuild(width: number, height: number): void {
-    this.layout = computeLayout(width, height);
+    this.layout = computeLayout(width, height, this.mode);
     this.world.removeAll(true);
 
     this.drawBackground();
     this.drawPenaltyBox();
-    this.drawGoal();
-    this.drawNet();
-    this.drawZoneGrid();
-    this.drawBallShadow();
+
+    if (this.mode === 'keeper') {
+      // Keeper's-eye: no far goal/net/grid; a subtle near frame is the goal we
+      // defend. Clear the taker-view net so it doesn't linger after a switch.
+      this.netGfx.clear();
+      this.drawNearGoalFrame();
+    } else {
+      this.drawGoal();
+      this.drawNet();
+      this.drawZoneGrid();
+      this.drawBallShadow();
+    }
 
     this.resetBall();
     this.resetKeeper();
     this.resetTaker();
   }
 
+  /** Keeper's-eye: a subtle posts+crossbar frame around the near goal plane, so
+   *  the player can see the goal they are defending (we are standing in it). */
+  private drawNearGoalFrame(): void {
+    const goal = this.layout.goal;
+    const t = this.layout.post;
+    const g = this.g();
+    const left = goal.x;
+    const right = goal.x + goal.width;
+    const top = goal.y;
+    const bottom = goal.y + goal.height;
+    g.fillStyle(CONFIG.COLORS.goalFrame, 0.85);
+    g.fillRect(left - t / 2, top - t / 2, goal.width + t, t); // crossbar
+    g.fillRect(left - t / 2, top - t / 2, t, bottom - top); // left post
+    g.fillRect(right - t / 2, top - t / 2, t, bottom - top); // right post
+    // Faint net hatch so the frame reads as a goal mouth.
+    g.lineStyle(1, CONFIG.COLORS.net, 0.1);
+    const geo = CONFIG.GEOMETRY;
+    for (let c = 1; c < geo.netCols; c++) {
+      const x = left + (c / geo.netCols) * goal.width;
+      g.lineBetween(x, top, x, bottom);
+    }
+    for (let r = 1; r < geo.netRows; r++) {
+      const y = top + (r / geo.netRows) * goal.height;
+      g.lineBetween(left, y, right, y);
+    }
+  }
+
   private resetBall(): void {
     this.drawBallGraphic(this.layout.ball.r);
-    this.ball.setScale(1).setRotation(0).setPosition(this.layout.ball.x, this.layout.ball.y);
+    // Keeper's-eye: at rest the ball sits far away (small). Taker view: full size.
+    const restScale = this.mode === 'keeper' ? CONFIG.KEEPER.flightScaleStart : 1;
+    this.ball.setScale(restScale).setRotation(0).setPosition(this.layout.ball.x, this.layout.ball.y);
   }
 
   private resetKeeper(): void {
@@ -827,16 +877,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   // Keeper drawn with FEET at the local origin (so rotation = a dive lean).
+  // Keeper's-eye (Keeper mode) shows the keeper BIG from BEHIND, so it uses a
+  // smaller head sitting above broad shoulders; the far Taker-mode keeper keeps
+  // its original chunky-head proportions (it is only a few px tall).
   private drawKeeperGraphic(w: number, h: number): void {
     const g = this.keeperGfx;
     g.clear();
-    const headR = w * 0.34;
+    const back = this.mode === 'keeper';
+    const headR = w * (back ? 0.2 : 0.34);
     const armLen = w * 0.38;
-    const armY = -h + h * 0.18;
-    const gloveR = w * 0.2;
+    const armY = -h + h * 0.22;
+    const gloveR = w * (back ? 0.22 : 0.2);
+    const torsoTop = back ? -h + headR * 1.7 : -h; // head sits above the torso (back view)
 
     g.fillStyle(CONFIG.COLORS.keeperBody, 1);
-    g.fillRoundedRect(-w / 2, -h, w, h - headR, Math.max(6, w * 0.16));
+    g.fillRoundedRect(-w / 2, torsoTop, w, -torsoTop, Math.max(6, w * 0.16));
     g.fillRoundedRect(-w / 2 - armLen, armY, armLen, h * 0.13, 6);
     g.fillRoundedRect(w / 2, armY, armLen, h * 0.13, 6);
 
@@ -845,7 +900,7 @@ export class GameScene extends Phaser.Scene {
     g.fillCircle(w / 2 + armLen, armY + h * 0.065, gloveR);
 
     g.fillStyle(CONFIG.COLORS.keeperSkin, 1);
-    g.fillCircle(0, -h + headR * 0.2, headR);
+    g.fillCircle(0, back ? -h + headR : -h + headR * 0.2, headR);
   }
 
   // CPU taker (Keeper mode) — a simple back-view striker, FEET at the local origin

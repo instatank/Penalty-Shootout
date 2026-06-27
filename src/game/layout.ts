@@ -37,7 +37,12 @@ export interface Layout {
   taker: { x: number; feetY: number; w: number; h: number }; // CPU striker (Keeper mode)
 }
 
-export function computeLayout(width: number, height: number): Layout {
+/** Which camera to lay out: the taker's view (default) or the keeper's-eye view. */
+export type LayoutView = 'taker' | 'keeper';
+
+export function computeLayout(width: number, height: number, view: LayoutView = 'taker'): Layout {
+  if (view === 'keeper') return computeKeeperLayout(width, height);
+
   const G = CONFIG.GEOMETRY;
   const isLandscape = width >= height;
   const p = isLandscape ? G.landscape : G.portrait;
@@ -83,6 +88,54 @@ export function computeLayout(width: number, height: number): Layout {
     w: goalW * G.takerWidthFrac,
     h: takerH,
   };
+
+  return { width, height, isLandscape, goal, post, horizonY, box, spot, ball, keeper, taker };
+}
+
+/**
+ * Keeper's-eye view (Keeper mode): we sit behind the keeper looking OUT. The
+ * `goal` here is the NEAR foreground plane the ball arrives in — it doubles as
+ * the goal rect handed to resolvePenalty, so all normalised-coord math is reused.
+ * The taker + penalty spot sit far + small; the keeper is big in the foreground;
+ * the ball launches at the far spot and grows toward the camera.
+ */
+function computeKeeperLayout(width: number, height: number): Layout {
+  const G = CONFIG.GEOMETRY;
+  const kv = G.keeperView;
+  const isLandscape = width >= height;
+  const cx = width / 2;
+
+  // Near goal plane (the save/target plane) — large, in the foreground.
+  const goalW = width * kv.goalWidthFrac;
+  const goalTop = height * kv.goalTopFrac;
+  const goalBottom = height * kv.goalBottomFrac;
+  const goal: Rect = { x: cx - goalW / 2, y: goalTop, width: goalW, height: goalBottom - goalTop };
+
+  const horizonY = height * kv.horizonYFrac; // stadium/pitch split (far)
+  const post = goal.height * G.postThicknessFrac;
+
+  // Perspective box: narrow far (at the horizon) → wide near (the foreground).
+  const box: BoxTrapezoid = {
+    farL: cx - width * kv.boxFarHalfFrac,
+    farR: cx + width * kv.boxFarHalfFrac,
+    nearL: cx - width * kv.boxNearHalfFrac,
+    nearR: cx + width * kv.boxNearHalfFrac,
+    farY: horizonY,
+    nearY: height * 0.99,
+  };
+
+  const spot = { x: cx, y: height * kv.spotYFrac };
+  // Ball launches at the far spot. Its radius is the near (big) size; the flight
+  // scales it up from small (far) — see CONFIG.KEEPER.flightScale*.
+  const ballR = height * (isLandscape ? G.landscape.ballRadiusFrac : G.portrait.ballRadiusFrac);
+  const ball = { x: spot.x, y: spot.y, r: ballR };
+
+  // Width is DERIVED from height (human aspect) so figures don't stretch into
+  // pillars on a narrow portrait screen.
+  const keeperH = height * kv.keeperHeightFrac;
+  const keeper = { x: cx, feetY: height * kv.keeperFeetYFrac, w: keeperH * kv.keeperAspect, h: keeperH };
+  const takerH = height * kv.takerHeightFrac;
+  const taker = { x: spot.x, feetY: spot.y + height * 0.015, w: takerH * kv.takerAspect, h: takerH };
 
   return { width, height, isLandscape, goal, post, horizonY, box, spot, ball, keeper, taker };
 }
