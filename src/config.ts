@@ -166,7 +166,9 @@ const AIM = {
 const FLIGHT = {
   flightDuration: 620, // ms ball takes to reach the goal plane
   easing: 'Quad.easeOut', // decelerate into the goal (reads as perspective)
-  arcHeightFrac: 0.12, // apex lift above the straight path, as a fraction of screen height
+  arcHeightFrac: 0.075, // apex lift above the straight path, as a fraction of screen height.
+  //  Lowered from 0.12 — the vertical arc read too floaty (owner note). Sideways
+  //  curve (curveGain below) is separate and was left as-is.
   curveGain: 0.15, // lateral bend at apex = curve * curveGain * goalWidth.
   //  Small on purpose — penalties barely curve (owner note); effect only.
   scaleStart: 1.0, // ball scale at the foot (near)
