@@ -41,6 +41,8 @@ src/
     zones.ts            # 3x2 zone grid: ids, rects, centers (take goal rect; shared by render + resolve)
     scenes/
       GameScene.ts      # the pitch + provider-driven kick loop + keeper dive + outcome
+  audio/
+    Sfx.ts              # procedural Web Audio crowd cheer/groan (no asset files)
   ui/
     DebugOverlay.ts     # RULE 2 — toggleable live value readout
 ```
@@ -64,4 +66,5 @@ src/
   On release the ball launches from the spot along an arc (CONFIG.FLIGHT.arcHeightFrac) with a SUBTLE curve (penalties barely bend — owner note; maxCurve 0.25, small curveGain), shrinking scaleStart→scaleEnd for fake depth, landing at aim target + small power-based scatter (Math.random for now; M4 makes it seeded in resolvePenalty). Haptic kick buzz. Resets after FLIGHT.resetDelay. NO keeper / save-goal yet (M4). Movable ball is its own object; pitch stays static.
 - **Milestone 4 — Taker mode complete: COMPLETE (in owner playtest).**
   Pure deterministic resolvePenalty() (game/resolve.ts, no Phaser): saveChance = base + zoneMatch·zoneBonus·timingQuality − power·powerPenalty − cornerness·cornerPenalty, seeded roll. InputProvider interface (input/providers.ts): LocalHumanProvider (live swipe → seeded TakerInput via aim.finalizeShot) + CpuProvider keeper (dive zone+timing from CONFIG.CPU_KEEPER.difficulty). GameScene runs a provider-driven kick loop that NEVER branches CPU/human (the M8 keystone): aim → CPU keeper dive → resolve → GOAL/SAVE/MISS banner → reset. Verified: corner+power is unsaveable even on a correct keeper read (PRD risk/reward); loop survives orientation changes (cancel() resolves the pending taker promise).
+- **Aesthetic pass (owner requests, on top of M4):** geometric save model so the result matches the visible ball↔keeper interaction; net shakes on a goal only; celebratory banner zoom (small→pop, goal pulses) + procedural crowd cheer (goal) / groan (save/miss); ball restyled as the adidas "Trionda" (FIFA WC 2026) — white with 3 colour waves + gold, spins in flight.
 - Next: ⏸ owner playtest sign-off, then **Milestone 5 — Keeper mode** (CpuProvider taker + tell + human dive input + timing, resolved through the SAME function).

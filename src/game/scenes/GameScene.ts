@@ -24,12 +24,14 @@ import { resolvePenalty, type PenaltyResult, type TakerInput, type KeeperInput }
 import { LocalHumanProvider, CpuProvider, type PenaltyContext } from '../../input/providers';
 import { SwipeInput, deriveSwipe, type SwipePhase, type SwipePoint } from '../../input/SwipeInput';
 import { DebugOverlay } from '../../ui/DebugOverlay';
+import { Sfx } from '../../audio/Sfx';
 
 type SceneState = 'aiming' | 'busy';
 
 export class GameScene extends Phaser.Scene {
   private debug!: DebugOverlay;
   private world!: Phaser.GameObjects.Container; // static pitch visuals
+  private netGfx!: Phaser.GameObjects.Graphics; // the net (shakeable on a goal)
   private fx!: Phaser.GameObjects.Graphics; // swipe / aim feedback overlay
   private ball!: Phaser.GameObjects.Container;
   private ballGfx!: Phaser.GameObjects.Graphics;
@@ -37,6 +39,7 @@ export class GameScene extends Phaser.Scene {
   private keeperGfx!: Phaser.GameObjects.Graphics;
   private outcomeText!: Phaser.GameObjects.Text;
   private layout!: Layout;
+  private sfx = new Sfx();
 
   private state: SceneState = 'aiming';
   private epoch = 0; // bumps on resize to invalidate an in-flight kick
@@ -52,6 +55,10 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.world = this.add.container(0, 0);
+
+    // Net is its own object so it can shake on a goal (sits above the frame,
+    // below the actors).
+    this.netGfx = this.add.graphics().setDepth(10);
 
     // Movable actors (the pitch behind them is static).
     this.ballGfx = this.add.graphics();
@@ -131,6 +138,7 @@ export class GameScene extends Phaser.Scene {
     this.state = 'aiming';
     this.fx.clear();
     this.outcomeText.setVisible(false);
+    this.netGfx.setPosition(0, 0); // cancel any leftover shake
     this.resetBall();
     this.resetKeeper();
     this.showIdleDebug();
@@ -148,6 +156,7 @@ export class GameScene extends Phaser.Scene {
 
   // ── Input → aim preview while aiming; commit the shot on release ───────────
   private onSwipe(phase: SwipePhase, points: SwipePoint[]): void {
+    if (phase === 'start') this.sfx.unlock(); // first touch unlocks Web Audio
     if (this.state !== 'aiming') return; // ignore input while a kick is resolving
 
     if (points.length < 2) {
@@ -230,6 +239,7 @@ export class GameScene extends Phaser.Scene {
         const y = start.y + (end.y - start.y) * t - arcPx * Math.sin(Math.PI * t);
         this.ball.setPosition(x, y);
         this.ball.setScale(F.scaleStart + (F.scaleEnd - F.scaleStart) * t);
+        this.ball.setRotation(t * Math.PI * 2 * F.spinTurns); // spin the ball in flight
       },
     });
 
@@ -256,23 +266,63 @@ export class GameScene extends Phaser.Scene {
           ? CONFIG.COLORS.outcomeSave
           : CONFIG.COLORS.outcomeMiss;
 
+    const isGoal = result.outcome === 'goal';
+
     if (CONFIG.HAPTICS.enabled) {
       const ms = result.saved ? CONFIG.HAPTICS.saveMs : result.scored ? CONFIG.HAPTICS.goalMs : 0;
       if (ms) navigator.vibrate?.(ms);
     }
 
+    // Crowd: cheer on a goal, groan on a save/miss.
+    if (isGoal) this.sfx.cheer();
+    else this.sfx.groan();
+
+    // The net shakes ONLY when the ball actually hits it (a goal).
+    if (isGoal) this.shakeNet();
+
     this.outcomeText
       .setText(label)
       .setColor('#' + color.toString(16).padStart(6, '0'))
-      .setFontSize(Math.round(Math.min(this.scale.width, this.scale.height) * 0.16) + 'px')
+      .setFontSize(Math.round(Math.min(this.scale.width, this.scale.height) * (isGoal ? 0.18 : 0.15)) + 'px')
       .setPosition(this.scale.width / 2, this.scale.height * 0.42)
       .setVisible(true)
-      .setScale(0.7)
+      .setScale(0.2)
       .setAlpha(1);
-    this.tweens.add({ targets: this.outcomeText, scale: 1, duration: 220, ease: 'Back.easeOut' });
+
+    // Celebratory zoom: small → overshoot → settle; a goal pops bigger + pulses.
+    this.tweens.add({
+      targets: this.outcomeText,
+      scale: isGoal ? CONFIG.UI.goalZoomPeak : 1.0,
+      duration: isGoal ? 300 : 220,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        if (isGoal) {
+          this.tweens.add({ targets: this.outcomeText, scale: CONFIG.UI.goalZoomPeak * 0.86, duration: 480, yoyo: true, repeat: 1, ease: 'Sine.easeInOut' });
+        }
+      },
+    });
 
     await this.delayP(CONFIG.UI.outcomeHoldMs);
     this.outcomeText.setVisible(false);
+  }
+
+  /** Brief damped jitter of the net — used only on a scored goal. */
+  private shakeNet(): void {
+    const amp = this.layout.goal.width * CONFIG.UI.netShakeAmpFrac;
+    const o = { p: 0 };
+    this.tweens.add({
+      targets: o,
+      p: 1,
+      duration: CONFIG.UI.netShakeMs,
+      ease: 'Linear',
+      onUpdate: () => {
+        const t = o.p;
+        const damp = 1 - t;
+        this.netGfx.x = Math.sin(t * Math.PI * 9) * amp * damp;
+        this.netGfx.y = Math.cos(t * Math.PI * 7) * amp * 0.5 * damp;
+      },
+      onComplete: () => this.netGfx.setPosition(0, 0),
+    });
   }
 
   // ── Awaitable, abortable timers/tweens (so a resize can't deadlock the loop)
@@ -366,7 +416,7 @@ export class GameScene extends Phaser.Scene {
 
   private resetBall(): void {
     this.drawBallGraphic(this.layout.ball.r);
-    this.ball.setScale(1).setPosition(this.layout.ball.x, this.layout.ball.y);
+    this.ball.setScale(1).setRotation(0).setPosition(this.layout.ball.x, this.layout.ball.y);
   }
 
   private resetKeeper(): void {
@@ -454,7 +504,9 @@ export class GameScene extends Phaser.Scene {
   private drawNet(): void {
     const r = this.layout.goal;
     const geo = CONFIG.GEOMETRY;
-    const g = this.g();
+    const g = this.netGfx;
+    g.clear();
+    this.netGfx.setPosition(0, 0);
     g.lineStyle(1, CONFIG.COLORS.net, 0.18);
     for (let c = 1; c < geo.netCols; c++) {
       const x = r.x + (c / geo.netCols) * r.width;
@@ -492,19 +544,49 @@ export class GameScene extends Phaser.Scene {
     g.fillEllipse(ball.x, ball.y + ball.r * 0.9, ball.r * 1.8, ball.r * 0.5);
   }
 
+  // Ball modelled on the adidas "Trionda" (FIFA World Cup 2026): white base with
+  // three bold colour waves (USA blue, Mexico green, Canada red) pinwheeling out
+  // from a gold centre, plus soft 3D shading. Drawn at the local origin.
   private drawBallGraphic(r: number): void {
+    const C = CONFIG.COLORS;
     const g = this.ballGfx;
     g.clear();
-    g.fillStyle(CONFIG.COLORS.ball, 1);
+
+    // White base.
+    g.fillStyle(C.ball, 1);
     g.fillCircle(0, 0, r);
-    g.fillStyle(CONFIG.COLORS.ballPanel, 1);
-    const pr = r * 0.42;
-    const pts: Phaser.Types.Math.Vector2Like[] = [];
-    for (let i = 0; i < 5; i++) {
-      const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
-      pts.push({ x: Math.cos(a) * pr, y: Math.sin(a) * pr });
+
+    // Three colour "waves" 120° apart, each a tapering petal toward the rim.
+    const waveColors = [C.ballBlue, C.ballGreen, C.ballRed];
+    const k = 2.6; // petal narrowness (higher = thinner, more white showing)
+    const reach = r * 0.86;
+    const span = Math.PI / 2 / k; // angle at which the petal closes
+    const steps = 16;
+    for (let i = 0; i < 3; i++) {
+      const a = -Math.PI / 2 + i * ((2 * Math.PI) / 3);
+      const pts: Phaser.Types.Math.Vector2Like[] = [{ x: 0, y: 0 }];
+      for (let s = 0; s <= steps; s++) {
+        const th = a - span + 2 * span * (s / steps);
+        const rad = reach * Math.max(0, Math.cos(k * (th - a)));
+        pts.push({ x: Math.cos(th) * rad, y: Math.sin(th) * rad });
+      }
+      g.fillStyle(waveColors[i], 1);
+      g.fillPoints(pts as Phaser.Geom.Point[], true);
     }
-    g.fillPoints(pts as Phaser.Geom.Point[], true);
+
+    // Gold centre nub (trophy homage).
+    g.fillStyle(C.ballGold, 1);
+    g.fillCircle(0, 0, r * 0.17);
+
+    // Soft 3D shading: highlight top-left, shadow bottom-right.
+    g.fillStyle(0xffffff, 0.16);
+    g.fillCircle(-r * 0.33, -r * 0.33, r * 0.5);
+    g.fillStyle(0x000000, 0.12);
+    g.fillCircle(r * 0.34, r * 0.34, r * 0.55);
+
+    // Rim outline.
+    g.lineStyle(Math.max(1, r * 0.05), C.ballOutline, 0.85);
+    g.strokeCircle(0, 0, r);
   }
 
   // Keeper drawn with FEET at the local origin (so rotation = a dive lean).

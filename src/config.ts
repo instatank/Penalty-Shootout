@@ -44,8 +44,14 @@ const COLORS = {
   net: 0xffffff,
   zoneLine: 0xffffff, // 3x2 grid lines drawn on the goal mouth
 
-  ball: 0xffffff,
-  ballPanel: 0x1a1a1a, // pentagon hint on the ball
+  // Ball modelled on the adidas "Trionda" (FIFA World Cup 2026 official ball):
+  // a white ball with three bold colour waves for the host nations + gold.
+  ball: 0xffffff, // white base
+  ballBlue: 0x2657d6, // USA wave
+  ballRed: 0xe5202e, // Canada wave
+  ballGreen: 0x16a34a, // Mexico wave
+  ballGold: 0xf2c14e, // gold trophy accent
+  ballOutline: 0xb8c0c8,
 
   keeperBody: 0x1565c0, // keeper kit (blue — strong contrast vs green + navy)
   keeperGloves: 0xffeb3b,
@@ -178,7 +184,8 @@ const FLIGHT = {
   //  Small on purpose — penalties barely curve (owner note); effect only.
   scaleStart: 1.0, // ball scale at the foot (near)
   scaleEnd: 0.42, // ball scale at the goal (far) — sells fake depth
-  resetDelay: 750, // ms to hold the landed ball before resetting to the spot
+  resetDelay: 900, // ms to hold the landed ball before resetting to the spot
+  spinTurns: 1.5, // how many times the ball spins during its flight (visual life)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -252,8 +259,21 @@ const HAPTICS = {
 // UI — outcome reveal (PRD §12). Big GOAL / SAVE / MISS banner between kicks.
 // ─────────────────────────────────────────────────────────────────────────────
 const UI = {
-  outcomeHoldMs: 1100, // how long the GOAL/SAVE/MISS banner stays up
+  outcomeHoldMs: 1200, // how long the GOAL/SAVE/MISS banner stays up
   betweenKicksMs: 250, // small beat before the ball resets for the next kick
+  goalZoomPeak: 1.3, // banner overshoot scale on a GOAL (celebratory pop)
+  netShakeAmpFrac: 0.014, // net shake amplitude as a fraction of goal width (goal only)
+  netShakeMs: 480, // net shake duration
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SOUND (PRD §11 — optional) — lightweight procedural crowd SFX via Web Audio,
+// so there are no audio asset files to ship. Cheer on a goal, groan on a save/
+// miss. Unlocked on first touch (browsers require a user gesture).
+// ─────────────────────────────────────────────────────────────────────────────
+const SOUND = {
+  enabled: true,
+  volume: 0.4,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -279,6 +299,7 @@ export const CONFIG = {
   SESSION,
   HAPTICS,
   UI,
+  SOUND,
   DEBUG,
 } as const;
 
