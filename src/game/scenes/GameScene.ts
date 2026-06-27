@@ -192,18 +192,19 @@ export class GameScene extends Phaser.Scene {
     const goal = this.layout.goal;
     const start = { x: this.layout.ball.x, y: this.layout.ball.y };
 
-    // Keeper dive target (toward the guessed zone), starting after a reaction beat.
-    const zc = zoneCenter(keeper.diveZone, goal);
-    const kx = this.layout.keeper.x + (zc.x - this.layout.keeper.x) * K.reach;
-    const isTop = keeper.diveZone[0] === 'T';
-    const ky = this.layout.keeper.feetY - (isTop ? goal.height * 0.22 : 0);
-    const lean = Phaser.Math.Clamp((zc.x - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.6;
+    // Keeper dives to the SAME point the resolver used (result.keeperNorm), so
+    // the visible dive and the outcome always agree. Hands reach (handX, handY).
+    const handX = goal.x + result.keeperNorm.x * goal.width;
+    const handY = goal.y + result.keeperNorm.y * goal.height;
+    const feetX = handX;
+    const feetY = handY + this.layout.keeper.h * 0.5; // place the body so the gloves cover handY
+    const lean = Phaser.Math.Clamp((handX - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.7;
     this.time.delayedCall(K.reactionDelay, () => {
-      this.tweens.add({ targets: this.keeper, x: kx, y: ky, rotation: lean, duration: K.diveDuration, ease: 'Quad.easeOut' });
+      this.tweens.add({ targets: this.keeper, x: feetX, y: feetY, rotation: lean, duration: K.diveDuration, ease: 'Quad.easeOut' });
     });
 
-    // Ball end: a save deflects to the keeper's reach; otherwise the landing point.
-    const end = result.saved ? { x: kx, y: ky - goal.height * 0.12 } : taker.landingPoint;
+    // Ball end: a save meets the keeper's gloves; otherwise its landing point.
+    const end = result.saved ? { x: handX, y: handY } : taker.landingPoint;
     this.drawLandingMarker(taker.landingPoint);
 
     const arcPx = this.scale.height * F.arcHeightFrac;
@@ -214,7 +215,7 @@ export class GameScene extends Phaser.Scene {
       'FLIGHT',
       'power ' + taker.power.toFixed(2),
       'landing ' + (taker.landingZone ?? 'WIDE/OVER') + '   keeper ' + keeper.diveZone,
-      'saveChance ' + Math.round(result.saveChance * 100) + '%',
+      'timing ' + result.timingQuality.toFixed(2) + '   reach ' + result.reachMargin.toFixed(2),
     ]);
 
     const prog = { t: 0 };
@@ -231,6 +232,18 @@ export class GameScene extends Phaser.Scene {
         this.ball.setScale(F.scaleStart + (F.scaleEnd - F.scaleStart) * t);
       },
     });
+
+    // On a save, the ball deflects off the keeper (a short rebound out + down).
+    if (result.saved) {
+      const dir = handX <= this.layout.keeper.x ? -1 : 1;
+      await this.tweenP({
+        targets: this.ball,
+        x: handX + dir * goal.width * 0.08,
+        y: handY + goal.height * 0.22,
+        duration: 200,
+        ease: 'Quad.easeOut',
+      });
+    }
   }
 
   private async showOutcome(result: PenaltyResult): Promise<void> {

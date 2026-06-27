@@ -2,14 +2,16 @@
  * resolve.ts — THE keystone (PRD §7). A single PURE, DETERMINISTIC function
  * decides every save/goal/miss in the game.
  *
- * It does not know or care whether the taker/keeper input came from a local
- * human, the CPU, or (Milestone 8) a remote opponent — that property is exactly
- * what lets online drop in as plumbing rather than a rewrite (PRD §8). It also
- * imports NO Phaser and NO geometry: callers pass already-derived discrete
- * values, so the function is trivially testable and replayable.
+ * Model (revised after playtest): GEOMETRIC, not a hidden dice roll. The keeper
+ * saves when the ball lands within its dive REACH — an ellipse around the point
+ * it actually dives to. Bad timing and high power shrink that reach; corners sit
+ * outside it. So the outcome matches the visible ball↔keeper interaction: ball
+ * meets keeper ⇒ save, ball beats keeper ⇒ goal. A small seeded band at the very
+ * edge of reach keeps borderline shots lively (and replayable online).
  *
- * Determinism: identical inputs + identical `seed` ⇒ identical result. Required
- * so that, online, both phones replay the same outcome from the same seed.
+ * It imports NO Phaser and works in normalised goal coordinates (0..1 across the
+ * goal mouth), so it is resolution-independent, trivially testable, and — given
+ * identical inputs + seed — perfectly deterministic for online replay (PRD §8).
  */
 
 import { CONFIG } from '../config';
@@ -17,14 +19,14 @@ import { zoneIndices, type ZoneId } from './zones';
 
 export type Outcome = 'goal' | 'save' | 'miss';
 
-/** The taker's committed action (PRD §7). Geometry already reduced to scalars. */
+/** The taker's committed action (PRD §7). */
 export interface TakerInput {
-  targetZone: ZoneId | null; // where they aimed (null = aimed off the goal)
-  landingZone: ZoneId | null; // where the ball actually ends up (null = wide/over → miss)
+  targetZone: ZoneId | null; // where they aimed
+  landingZone: ZoneId | null; // zone the ball lands in (for debug/animation)
+  landingNorm: { x: number; y: number }; // landing in normalised goal coords (outside [0,1] = off goal)
   power: number; // 0..1
   curve: number; // signed, for animation
-  cornerness: number; // 0..1, how tight to a post/bar the landing is
-  landingPoint: { x: number; y: number }; // pixels, for animation only
+  landingPoint: { x: number; y: number }; // pixels, for animation
 }
 
 /** The keeper's committed action (PRD §7). Identical shape for CPU/human/remote. */
@@ -37,9 +39,9 @@ export interface PenaltyResult {
   outcome: Outcome;
   saved: boolean;
   scored: boolean;
-  saveChance: number; // the clamped probability that was rolled against
-  zoneMatch: number; // 0 / 0.5 / 1 — how well the dive zone covered the landing
+  keeperNorm: { x: number; y: number }; // where the keeper dives, normalised (drives the visual)
   timingQuality: number; // 0..1
+  reachMargin: number; // ellipse value (≤1 inside reach) — for debug
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -48,7 +50,7 @@ function clamp(v: number, lo: number, hi: number): number {
 
 /**
  * Deterministic [0,1) PRNG (mulberry32-style hash). `salt` yields independent
- * streams from the same kick seed (scatter, keeper guess, save roll, …).
+ * streams from the same kick seed.
  */
 export function seededRandom(seed: number, salt = 0): number {
   let t = (Math.imul(seed ^ 0x9e3779b9, 0x85ebca77) ^ Math.imul(salt + 1, 0xc2b2ae35)) >>> 0;
@@ -58,47 +60,57 @@ export function seededRandom(seed: number, salt = 0): number {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-/** How well a dive zone covers a landing zone: 1 same, 0.5 adjacent, else 0. */
-export function zoneMatch(dive: ZoneId, landing: ZoneId): number {
-  if (dive === landing) return 1;
-  const a = zoneIndices(dive);
-  const b = zoneIndices(landing);
-  const manhattan = Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
-  return manhattan === 1 ? 0.5 : 0;
+/** Normalised centre of a zone within the goal mouth (x,y ∈ 0..1). */
+function zoneCenterNorm(zone: ZoneId): { x: number; y: number } {
+  const { col, row } = zoneIndices(zone);
+  return { x: (col + 0.5) / CONFIG.GEOMETRY.zoneCols, y: (row + 0.5) / CONFIG.GEOMETRY.zoneRows };
 }
 
 /**
  * Compute the outcome of one penalty. Pure: same inputs + seed ⇒ same result.
  *
- * saveChance = base + zoneMatch·zoneBonus·timingQuality − power·powerPenalty
- *              − cornerness·cornerPenalty   (PRD §7)
- * The timing factor gates the zone bonus: diving the right way but mistimed
- * doesn't save. A landing that's off the goal is a miss regardless of the keeper.
+ * The keeper dives to its guessed zone (keeperNorm). Its reach is an ellipse
+ * (reachX × reachY) scaled down by poor timing and by shot power. The ball is
+ * SAVED if its landing sits inside that ellipse; a thin `margin` band at the
+ * edge is decided by a seeded coin-flip weighted by how close it is.
  */
 export function resolvePenalty(taker: TakerInput, keeper: KeeperInput, seed: number): PenaltyResult {
   const R = CONFIG.RESOLUTION;
+  const keeperNorm = zoneCenterNorm(keeper.diveZone);
 
-  if (taker.landingZone === null) {
-    return { outcome: 'miss', saved: false, scored: false, saveChance: 0, zoneMatch: 0, timingQuality: 0 };
+  const ln = taker.landingNorm;
+  const offGoal = ln.x < 0 || ln.x > 1 || ln.y < 0 || ln.y > 1;
+  if (offGoal) {
+    return { outcome: 'miss', saved: false, scored: false, keeperNorm, timingQuality: 0, reachMargin: Infinity };
   }
 
-  const zm = zoneMatch(keeper.diveZone, taker.landingZone);
   const timingQuality = clamp(1 - Math.abs(keeper.diveTiming) / R.timingWindowMs, 0, 1);
+  // Effective reach: full when well-timed and the shot is soft; shrinks otherwise.
+  const reachScale = (R.timingFloor + (1 - R.timingFloor) * timingQuality) * (1 - taker.power * R.powerReachPenalty);
+  const rx = Math.max(1e-4, R.reachX * reachScale);
+  const ry = Math.max(1e-4, R.reachY * reachScale);
 
-  let chance =
-    R.baseSaveChance +
-    zm * R.zoneMatchBonus * timingQuality -
-    taker.power * R.powerPenalty -
-    taker.cornerness * R.cornerPenalty;
-  chance = clamp(chance, 0, R.maxSaveChance);
+  const dx = (ln.x - keeperNorm.x) / rx;
+  const dy = (ln.y - keeperNorm.y) / ry;
+  const ellipse = dx * dx + dy * dy; // ≤1 ⇒ inside reach
 
-  const saved = seededRandom(seed, 0) < chance;
+  let saved: boolean;
+  if (ellipse <= 1 - R.margin) {
+    saved = true;
+  } else if (ellipse >= 1 + R.margin) {
+    saved = false;
+  } else {
+    // Borderline: seeded coin-flip, more likely to save the closer it is.
+    const p = (1 + R.margin - ellipse) / (2 * R.margin); // 1 at inner edge → 0 at outer
+    saved = seededRandom(seed, 3) < p;
+  }
+
   return {
     outcome: saved ? 'save' : 'goal',
     saved,
     scored: !saved,
-    saveChance: chance,
-    zoneMatch: zm,
+    keeperNorm,
     timingQuality,
+    reachMargin: ellipse,
   };
 }

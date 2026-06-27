@@ -191,9 +191,10 @@ const CPU_KEEPER = {
   guessAccuracyMin: 0.25,
   guessAccuracyMax: 0.8,
   // Dive timing spread (× timingWindowMs) is lerp(max,min) by difficulty — a
-  // better keeper times the dive tighter.
-  timingSpreadMin: 0.35,
-  timingSpreadMax: 1.7,
+  // better keeper times the dive tighter. Kept modest so a right-direction guess
+  // mostly translates into a save.
+  timingSpreadMin: 0.2,
+  timingSpreadMax: 0.9,
   reactionDelay: 160, // ms after the strike before the dive animation starts
   diveDuration: 420, // ms for the dive animation
   reach: 0.92, // how far toward the zone the keeper visibly reaches (0..1)
@@ -215,12 +216,18 @@ const CPU_TAKER = {
 // wired until Milestone 4.) maxSaveChance < 1 keeps perfect corners unsaveable.
 // ─────────────────────────────────────────────────────────────────────────────
 const RESOLUTION = {
-  baseSaveChance: 0.18,
-  zoneMatchBonus: 0.55, // keeper dive zone overlaps ball landing zone
-  timingWindowMs: 140, // how tight the ideal dive-timing window is
-  powerPenalty: 0.22, // harder shots are harder to stop
-  cornerPenalty: 0.3, // shots tight to post/bar are harder to reach
-  maxSaveChance: 0.92, // ceiling (<1 so a perfect corner can't be saved)
+  // GEOMETRIC save model: the keeper saves when the ball lands within its dive
+  // reach (an ellipse around where it actually dives). This makes the outcome
+  // match the visible ball↔keeper interaction instead of a hidden dice roll.
+  // Reach is in NORMALISED goal coords (fraction of goal width / height).
+  reachX: 0.34, // horizontal reach around the dive point
+  reachY: 0.4, // vertical reach (a touch more — rows are tall)
+  timingWindowMs: 140, // dive-timing tolerance; worse timing → less reach
+  timingFloor: 0.72, // reach kept even with the worst timing (0..1). High so a
+  //  correct DIRECTION guess reliably saves — beatability comes from the keeper
+  //  guessing the wrong way, not from fumbled timing (owner feel note).
+  powerReachPenalty: 0.3, // hard shots shrink reach by up to this (× power)
+  margin: 0.3, // soft save/goal band at the very edge of reach (seeded tie-break)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

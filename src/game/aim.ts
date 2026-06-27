@@ -74,19 +74,17 @@ export function finalizeShot(
   const rad = Math.sqrt(seededRandom(seed, 2)) * aim.errorRadius; // uniform over the disc
   const landingPoint = { x: aim.targetX + Math.cos(ang) * rad, y: aim.targetY + Math.sin(ang) * rad };
   const landingZone = zoneAtPoint(landingPoint.x, landingPoint.y, goal);
-
-  // cornerness: 1 when the landing hugs an edge (post or bar), 0 dead centre.
-  const fx = clamp((landingPoint.x - goal.x) / goal.width, 0, 1);
-  const fy = clamp((landingPoint.y - goal.y) / goal.height, 0, 1);
-  const nearestEdge = Math.min(fx, 1 - fx, fy, 1 - fy); // 0 at edge .. 0.5 centre
-  const cornerness = clamp(1 - nearestEdge / 0.5, 0, 1);
+  const landingNorm = {
+    x: (landingPoint.x - goal.x) / goal.width,
+    y: (landingPoint.y - goal.y) / goal.height,
+  };
 
   return {
     targetZone: aim.targetZone,
     landingZone,
+    landingNorm,
     power: swipe.power,
     curve: swipe.curve,
-    cornerness,
     landingPoint,
   };
 }
