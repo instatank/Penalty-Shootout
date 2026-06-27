@@ -3,14 +3,14 @@
 Project guide for AI sessions. Keep it short. Read `penalty-shootout-PRD-v2.md` for the full spec — it is the source of truth.
 
 ## What this is
-A mobile-first, portrait-locked PWA penalty-shootout game. The whole game lives or dies on **swipe feel**. Ships in two stages:
+A mobile-first, **landscape-locked** PWA penalty-shootout game. (Orientation changed from the PRD's original portrait lock by owner decision 2026-06-27 — a real goal is wide, so landscape fits it naturally and removes the portrait dead-space.) The whole game lives or dies on **swipe feel**. Ships in two stages:
 - **Stage 1 (Milestones 1–7):** complete single-player game, both modes vs CPU.
 - **Stage 2 (Milestone 8):** online 2-player over room codes, added on top with no rewrite.
 
 ## Stack (decided — do not substitute without asking the owner)
 - **Phaser 3.x** (pinned to 3.90.0). **NOT Phaser 4.**
 - **TypeScript + Vite.** Build is type-checked (`tsc --noEmit`) then bundled by Vite.
-- **Vercel** hosting. **PWA**, portrait-locked (Milestone 7).
+- **Vercel** hosting. **PWA**, **landscape-locked** (Milestone 7). Design space 1280×720, Scale.FIT.
 - **Firebase** Realtime DB + anonymous auth — **Milestone 8 ONLY.** Do not add Firebase before then.
 
 ## Non-negotiable architecture rules
@@ -23,7 +23,7 @@ These make later milestones cheap. Get them right; do not shortcut them.
 
 ## File structure
 ```
-index.html              # touch-action:none, portrait viewport
+index.html              # touch-action:none viewport + portrait "rotate" hint
 vite/config.dev.mjs     # dev server
 vite/config.prod.mjs    # production build (Vercel-ready)
 src/
@@ -49,6 +49,6 @@ src/
 - Owner is non-technical: clear, well-commented code; explain decisions in plain language.
 
 ## Current status
-- **Milestone 1 — Scaffold + static scene: IN PROGRESS.**
-  Static scene only (perspective goal, ball, keeper, 3×2 zone grid drawn). No input, no ball flight yet.
-- Next: ⏸ owner playtest, then **Milestone 2 — Input layer + debug overlay**.
+- **Milestone 1 — Scaffold + static scene: COMPLETE (in owner playtest).**
+  Landscape static scene (wide perspective goal, ball, keeper, 3×2 zone grid, dark stadium backdrop for contrast). No input, no ball flight yet. Proportions/colours revised once per owner feedback.
+- Next: ⏸ owner playtest sign-off, then **Milestone 2 — Input layer + debug overlay**.

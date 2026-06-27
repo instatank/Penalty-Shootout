@@ -16,27 +16,41 @@
 // and Phaser's Scale.FIT scales it to the real screen. Portrait 9:16.
 // ─────────────────────────────────────────────────────────────────────────────
 const GAME = {
-  width: 720,
-  height: 1280,
-  backgroundColor: '#0b5d2b', // pitch green (behind everything)
+  // LANDSCAPE (owner decision 2026-06-27, overrides the PRD's original portrait
+  // lock): a real goal is wide (~3:1), so a sideways frame fits it naturally and
+  // removes the portrait "dead space". Authored against 1280x720; Scale.FIT
+  // scales this design space to the device while preserving aspect.
+  width: 1280,
+  height: 720,
+  backgroundColor: '#0d1b2a', // dark stadium tone (also fills any letterbox bars)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COLORS — every colour as a 0xRRGGBB number for Phaser graphics.
 // ─────────────────────────────────────────────────────────────────────────────
 const COLORS = {
-  pitch: 0x0b5d2b,
-  pitchStripe: 0x0a5226, // subtle mowed-stripe alternate
-  boxLine: 0xffffff, // penalty-box / spot markings
-  goalFrame: 0xf2f2f2, // posts + crossbar
-  goalFrameShadow: 0xc9c9c9,
+  // Backdrop behind/above the goal line — a dark stadium tone. This is the key
+  // contrast move: it breaks up the all-green screen and makes the white goal
+  // frame and net pop.
+  stadium: 0x0d1b2a, // dark navy stand shadow
+  stadiumBand: 0x16344a, // a lighter band suggesting stands/crowd
+
+  pitch: 0x2f7d33, // grass (richer, less flat than before)
+  pitchStripe: 0x276b2c, // mowed-stripe alternate
+  boxLine: 0xf5f5f5, // penalty-box / spot markings
+
+  goalFrame: 0xfafafa, // posts + crossbar
+  goalFrameShadow: 0x8a9097,
   net: 0xffffff,
   zoneLine: 0xffffff, // 3x2 grid lines drawn on the goal mouth
+
   ball: 0xffffff,
-  ballPanel: 0x222222, // pentagon hint on the ball
-  keeperBody: 0x1976d2, // keeper kit
-  keeperGloves: 0xffd54f,
+  ballPanel: 0x1a1a1a, // pentagon hint on the ball
+
+  keeperBody: 0x1565c0, // keeper kit (blue — strong contrast vs green + navy)
+  keeperGloves: 0xffeb3b,
   keeperSkin: 0xe8b38a,
+
   debugText: 0x00ff66,
   debugBg: 0x000000,
 } as const;
@@ -50,39 +64,42 @@ const COLORS = {
 // everything that references it follows.
 // ─────────────────────────────────────────────────────────────────────────────
 const GEOMETRY = {
-  // Goal mouth on screen (the plane balls are aimed at).
-  goalLeft: 120,
-  goalRight: 600,
-  goalTop: 300,
-  goalBottom: 560,
+  // Goal mouth on screen (the plane balls are aimed at). Wide and high in the
+  // frame so it reads like a real goal and dominates the view (landscape).
+  goalLeft: 330,
+  goalRight: 950,
+  goalTop: 150,
+  goalBottom: 380,
 
   postThickness: 14, // visual thickness of posts + crossbar
-  netRows: 9, // net hatch density
-  netCols: 13,
+  netRows: 8, // net hatch density
+  netCols: 16, // more columns — the goal is wide
 
   // The 3x2 aiming grid (cols x rows) drawn over the goal mouth.
   zoneCols: 3,
   zoneRows: 2,
 
   // Perspective ground: the penalty box is drawn as a trapezoid that is narrow
-  // at the goal (far) and wide at the player (near), selling fake depth.
-  boxFarHalfWidth: 250, // half-width of the box at the goal line (far)
-  boxNearHalfWidth: 330, // half-width of the box at the near edge
-  boxFarY: 560, // far edge sits at the goal line
-  boxNearY: 980, // near edge of the penalty box
+  // at the goal (far) and wide at the player (near), selling fake depth. In
+  // landscape the near edge is much wider than the goal, which gives a strong,
+  // natural sense of depth.
+  boxFarHalfWidth: 340, // half-width of the box at the goal line (far)
+  boxNearHalfWidth: 600, // half-width of the box at the near edge
+  boxFarY: 380, // far edge sits at the goal line
+  boxNearY: 690, // near edge of the penalty box
 
   // Penalty spot + ball rest position (near the camera, so it is drawn large).
-  penaltySpotY: 900,
-  ballRestX: 360,
-  ballRestY: 1080,
-  ballRadius: 34,
+  penaltySpotY: 540,
+  ballRestX: 640,
+  ballRestY: 635,
+  ballRadius: 28,
 
-  // Keeper standing pose, centred in the goal. Sized to cover ~1.3 zones so the
-  // CPU is beatable by corners (PRD §5).
-  keeperX: 360,
-  keeperFeetY: 560, // feet on the goal line
-  keeperHeight: 150,
-  keeperWidth: 70,
+  // Keeper standing pose, centred in the goal. Covers ~1 zone so the CPU is
+  // clearly beatable by corners (PRD §5).
+  keeperX: 640,
+  keeperFeetY: 380, // feet on the goal line
+  keeperHeight: 124,
+  keeperWidth: 58,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

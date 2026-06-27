@@ -1,5 +1,11 @@
 # PRD — Penalty Shootout (v2)
 
+> **Owner amendment (2026-06-27):** Orientation changed from **portrait-locked**
+> to **landscape-locked**. A real goal is wide, so a sideways frame fits it
+> naturally and removes the portrait dead-space. Wherever this doc says
+> "portrait" (esp. §3, §12), read "landscape". The PWA orientation lock in
+> Milestone 7 locks to landscape. Everything else stands.
+
 ## 0. How to read this doc
 This is the source of truth for the build. The game ships in two stages:
 - **Stage 1 (Milestones 1–7):** complete single-player game, both modes vs CPU. Shippable on its own.

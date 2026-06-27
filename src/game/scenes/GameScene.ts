@@ -23,7 +23,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.drawPitch();
+    this.drawBackground();
     this.drawPenaltyBox();
     this.drawGoal();
     this.drawNet();
@@ -36,26 +36,41 @@ export class GameScene extends Phaser.Scene {
     this.debug.setLines([
       'PENALTY SHOOTOUT',
       'Milestone 1 — static scene',
-      `design ${CONFIG.GAME.width}x${CONFIG.GAME.height}`,
+      'landscape ' + CONFIG.GAME.width + 'x' + CONFIG.GAME.height,
       'no input / flight yet',
       'tap DBG to hide',
     ]);
   }
 
-  // ── Pitch background with subtle mowed stripes ────────────────────────────
-  private drawPitch(): void {
+  // ── Background: dark stadium above the goal line, green pitch below ────────
+  // Splitting the screen at the goal line is the main contrast move — it breaks
+  // up the all-green look and makes the white goal frame read clearly.
+  private drawBackground(): void {
     const { width, height } = CONFIG.GAME;
+    const horizon = CONFIG.GEOMETRY.boxFarY; // goal line = where stadium meets grass
     const g = this.add.graphics();
-    g.fillStyle(CONFIG.COLORS.pitch, 1);
-    g.fillRect(0, 0, width, height);
 
-    // Horizontal mowed stripes that get shorter toward the goal (cheap depth).
+    // Stadium backdrop (everything above the goal line).
+    g.fillStyle(CONFIG.COLORS.stadium, 1);
+    g.fillRect(0, 0, width, horizon);
+    // A lighter band suggesting stands/crowd, for depth.
+    g.fillStyle(CONFIG.COLORS.stadiumBand, 1);
+    g.fillRect(0, horizon * 0.28, width, horizon * 0.22);
+
+    // Grass (everything below the goal line).
+    g.fillStyle(CONFIG.COLORS.pitch, 1);
+    g.fillRect(0, horizon, width, height - horizon);
+
+    // Horizontal mowed stripes that grow taller toward the camera (cheap depth).
     g.fillStyle(CONFIG.COLORS.pitchStripe, 1);
-    const stripes = 10;
+    const stripes = 8;
     for (let i = 0; i < stripes; i += 2) {
-      const y = CONFIG.GEOMETRY.boxFarY + (i / stripes) * (height - CONFIG.GEOMETRY.boxFarY);
-      const h = ((height - CONFIG.GEOMETRY.boxFarY) / stripes);
-      g.fillRect(0, y, width, h);
+      const t0 = i / stripes;
+      const t1 = (i + 1) / stripes;
+      // Ease so near stripes (bottom) are taller than far stripes (top).
+      const y0 = horizon + Math.pow(t0, 1.6) * (height - horizon);
+      const y1 = horizon + Math.pow(t1, 1.6) * (height - horizon);
+      g.fillRect(0, y0, width, y1 - y0);
     }
   }
 
