@@ -131,11 +131,6 @@ const INPUT = {
   // start→end line, as a fraction of swipe length, capped here (low — penalty).
   maxCurve: 0.35,
 
-  // Aim mapping (swipe direction → target on the goal plane). PRELIMINARY — used
-  // by the M2 reticle/overlay; ball flight that consumes it arrives in M3.
-  aimAngleRange: 50, // degrees from straight-up that maps to the goalpost edge
-  aimOvershoot: 1.2, // allow the target up to 20% past the posts/bar (so you can miss)
-
   // Accuracy scatter: errorRadius = (baseError + kPower * power) * goalWidth.
   // Fractions of goal width so the scatter scales with screen. Used for the M2
   // scatter ring preview and the M4 landing point.
@@ -143,6 +138,21 @@ const INPUT = {
   kPower: 0.09, // grows with power — high power widens the error (PRD §5)
 
   minSwipeDistFrac: 0.03, // shorter than this (fraction of screen height) = a tap, ignored
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AIM (PRD §4/§5) — how a swipe's DISPLACEMENT maps to a spot in the goal.
+// These are the primary "feel" knobs and the first thing to calibrate by
+// playtest. The two axes are independent so all six zones are reachable:
+//   • sideways swipe distance  → left/right placement
+//   • upward swipe distance    → height (short flick = low, long flick = high)
+// All values are fractions of the live SCREEN size, so they scale per device.
+// ─────────────────────────────────────────────────────────────────────────────
+const AIM = {
+  reachX: 0.22, // sideways swipe (fraction of screen WIDTH) to aim at a post
+  reachLow: 0.03, // up-swipe (fraction of screen HEIGHT) at/below which = ground (bottom)
+  reachHigh: 0.34, // up-swipe (fraction of screen HEIGHT) that = the crossbar (top)
+  overshoot: 1.15, // allow aiming slightly past the posts/bar so misses are possible
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,6 +223,7 @@ export const CONFIG = {
   COLORS,
   GEOMETRY,
   INPUT,
+  AIM,
   FLIGHT,
   CPU_KEEPER,
   CPU_TAKER,

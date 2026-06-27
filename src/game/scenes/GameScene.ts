@@ -73,7 +73,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     const sample = deriveSwipe(points, this.scale.height);
-    const aim = computeAim(sample, this.layout.goal);
+    const aim = computeAim(sample, this.layout.goal, this.scale.width, this.scale.height);
+
+    // Test hook (dev only; stripped from production builds).
+    if (import.meta.env.DEV) (window as unknown as { __lastAim?: unknown }).__lastAim = aim;
 
     // Ignore taps (tiny gestures) on release.
     const minDist = this.scale.height * CONFIG.INPUT.minSwipeDistFrac;
@@ -83,12 +86,16 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Swipe displacement as % of screen — handy for calibrating reach distances.
+    const upPct = Math.round((-sample.dy / this.scale.height) * 100);
+    const sidePct = Math.round((sample.dx / this.scale.width) * 100);
+
     this.drawSwipeFeedback(sample.points, aim);
     this.debug.setLines([
       'SWIPE' + (phase === 'end' ? ' (release)' : ''),
-      'vec ' + Math.round(sample.dx) + ', ' + Math.round(sample.dy),
-      'pow ' + sample.power.toFixed(2) + '  (' + sample.speedPxPerMs.toFixed(2) + ' px/ms)',
-      'curve ' + (sample.curve >= 0 ? '+' : '') + sample.curve.toFixed(3),
+      'swipe  up ' + upPct + '%   side ' + (sidePct >= 0 ? '+' : '') + sidePct + '%',
+      'power ' + sample.power.toFixed(2) + '   curve ' + (sample.curve >= 0 ? '+' : '') + sample.curve.toFixed(2),
+      'aim  x ' + aim.xFrac.toFixed(2) + '   height ' + aim.heightFrac.toFixed(2),
       'errR ' + Math.round(aim.errorRadius) + 'px',
       'target ' + (aim.targetZone ?? 'MISS (wide/over)'),
     ]);

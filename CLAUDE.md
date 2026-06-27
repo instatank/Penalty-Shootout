@@ -55,6 +55,7 @@ src/
 
 ## Current status
 - **Milestone 1 — Scaffold + static scene: COMPLETE.** Responsive scene, both orientations. (Plus an orientation-resize bugfix: game/viewport.ts.)
-- **Milestone 2 — Input layer + debug overlay: COMPLETE (in owner playtest).**
-  Raw Pointer Events with setPointerCapture + {x,y,t} path sampling (input/SwipeInput.ts). deriveSwipe() computes vector, power (release velocity over the last velocityWindowMs, resolution-independent), and signed curve. Live debug overlay prints vector/power/curve/errorRadius/target zone; on-screen aim reticle + scatter ring + target-zone highlight. NO ball flight yet (that's M3).
+- **Milestone 2 — Input layer + debug overlay: COMPLETE (calibrating feel).**
+  Raw Pointer Events with setPointerCapture + {x,y,t} path sampling (input/SwipeInput.ts). deriveSwipe() computes vector, power (release velocity over the last velocityWindowMs, resolution-independent), and signed curve. Live debug overlay + on-screen aim reticle/ring/zone highlight. NO ball flight yet (that's M3).
+  AIM MODEL (game/aim.ts, CONFIG.AIM): decoupled & distance-driven — sideways swipe distance sets the column, upward swipe distance sets the height (short flick = bottom row, long flick = top row). All six zones reachable. reachX/reachLow/reachHigh are the live calibration knobs being tuned with the owner.
 - Next: ⏸ owner playtest sign-off, then **Milestone 3 — Ball flight from the swipe** (the big "is the feel good?" checkpoint).
