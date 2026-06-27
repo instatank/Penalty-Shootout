@@ -10,6 +10,7 @@
 import Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { GameScene } from './scenes/GameScene';
+import { installViewportFix } from './viewport';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -26,5 +27,8 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 export function startGame(): Phaser.Game {
-  return new Phaser.Game(config);
+  const game = new Phaser.Game(config);
+  // Keep the canvas correctly full-screen across orientation changes.
+  installViewportFix(game);
+  return game;
 }
