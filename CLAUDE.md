@@ -3,14 +3,14 @@
 Project guide for AI sessions. Keep it short. Read `penalty-shootout-PRD-v2.md` for the full spec — it is the source of truth.
 
 ## What this is
-A mobile-first, **landscape-locked** PWA penalty-shootout game. (Orientation changed from the PRD's original portrait lock by owner decision 2026-06-27 — a real goal is wide, so landscape fits it naturally and removes the portrait dead-space.) The whole game lives or dies on **swipe feel**. Ships in two stages:
+A mobile-first PWA penalty-shootout game that is **responsive in both orientations** (owner decision 2026-06-27, replacing the PRD's original portrait-only lock). Landscape is the primary/best-looking view (a real goal is wide); portrait also works. The whole game lives or dies on **swipe feel**. Ships in two stages:
 - **Stage 1 (Milestones 1–7):** complete single-player game, both modes vs CPU.
 - **Stage 2 (Milestone 8):** online 2-player over room codes, added on top with no rewrite.
 
 ## Stack (decided — do not substitute without asking the owner)
 - **Phaser 3.x** (pinned to 3.90.0). **NOT Phaser 4.**
 - **TypeScript + Vite.** Build is type-checked (`tsc --noEmit`) then bundled by Vite.
-- **Vercel** hosting. **PWA**, **landscape-locked** (Milestone 7). Design space 1280×720, Scale.FIT.
+- **Vercel** hosting. **PWA** (Milestone 7). **Responsive**: Scale.RESIZE fills the screen; `game/layout.ts` computes a pixel layout from proportional config for the live size + orientation (portrait & landscape profiles). No fixed design-space pixels.
 - **Firebase** Realtime DB + anonymous auth — **Milestone 8 ONLY.** Do not add Firebase before then.
 
 ## Non-negotiable architecture rules
@@ -31,7 +31,8 @@ src/
   config.ts             # RULE 1 — all tuning constants, grouped by system
   game/
     main.ts             # Phaser.Game config (Scale FIT, portrait, scene list)
-    zones.ts            # 3x2 zone grid: ids, rects, centers (shared by render + resolve)
+    layout.ts           # responsive layout: computeLayout(w,h) -> pixel positions
+    zones.ts            # 3x2 zone grid: ids, rects, centers (take goal rect; shared by render + resolve)
     scenes/
       GameScene.ts      # the pitch: perspective goal, ball, keeper, zone grid
   ui/
@@ -50,5 +51,5 @@ src/
 
 ## Current status
 - **Milestone 1 — Scaffold + static scene: COMPLETE (in owner playtest).**
-  Landscape static scene (wide perspective goal, ball, keeper, 3×2 zone grid, dark stadium backdrop for contrast). No input, no ball flight yet. Proportions/colours revised once per owner feedback.
+  Responsive static scene (wide perspective goal, ball, keeper, 3×2 zone grid, dark stadium backdrop for contrast) that fills the screen in portrait & landscape. No input, no ball flight yet. Revised per owner feedback: → landscape, contrast pass, → fully responsive both-orientation layout.
 - Next: ⏸ owner playtest sign-off, then **Milestone 2 — Input layer + debug overlay**.

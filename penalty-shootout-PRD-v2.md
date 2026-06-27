@@ -1,10 +1,11 @@
 # PRD — Penalty Shootout (v2)
 
-> **Owner amendment (2026-06-27):** Orientation changed from **portrait-locked**
-> to **landscape-locked**. A real goal is wide, so a sideways frame fits it
-> naturally and removes the portrait dead-space. Wherever this doc says
-> "portrait" (esp. §3, §12), read "landscape". The PWA orientation lock in
-> Milestone 7 locks to landscape. Everything else stands.
+> **Owner amendment (2026-06-27):** The game is now **responsive in both
+> orientations** instead of portrait-locked. The scene fills the screen and
+> adapts to portrait or landscape (landscape is the primary, best-looking view —
+> a real goal is wide). Wherever this doc says "portrait-locked" (esp. §3, §12),
+> read "responsive, both orientations". Milestone 7 ships a PWA that supports
+> both rather than locking one. Everything else stands.
 
 ## 0. How to read this doc
 This is the source of truth for the build. The game ships in two stages:

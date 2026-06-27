@@ -64,42 +64,49 @@ const COLORS = {
 // everything that references it follows.
 // ─────────────────────────────────────────────────────────────────────────────
 const GEOMETRY = {
-  // Goal mouth on screen (the plane balls are aimed at). Wide and high in the
-  // frame so it reads like a real goal and dominates the view (landscape).
-  goalLeft: 330,
-  goalRight: 950,
-  goalTop: 150,
-  goalBottom: 380,
+  // ── PROPORTIONAL / RESPONSIVE LAYOUT ──────────────────────────────────────
+  // The scene fills whatever screen size and orientation the device gives us
+  // (no letterbox bars), so geometry is expressed as FRACTIONS of the live
+  // canvas size. game/layout.ts → computeLayout(w, h) turns these into pixels,
+  // and re-runs whenever the screen size or orientation changes. Two profiles
+  // (landscape / portrait) keep BOTH orientations looking intentional.
 
-  postThickness: 14, // visual thickness of posts + crossbar
+  // Shared shape constants.
+  goalAspect: 2.6, // goal mouth width : height (a real goal is ~3:1)
+  postThicknessFrac: 0.05, // post/crossbar thickness as a fraction of goal height
   netRows: 8, // net hatch density
-  netCols: 16, // more columns — the goal is wide
-
-  // The 3x2 aiming grid (cols x rows) drawn over the goal mouth.
-  zoneCols: 3,
+  netCols: 16,
+  zoneCols: 3, // the 3x2 aiming grid
   zoneRows: 2,
+  keeperHeightFrac: 0.54, // keeper height as a fraction of goal height
+  keeperWidthFrac: 0.095, // keeper body width as a fraction of goal width
+  // (Keeper covers ~1 zone so the CPU is clearly beatable by corners — PRD §5.)
 
-  // Perspective ground: the penalty box is drawn as a trapezoid that is narrow
-  // at the goal (far) and wide at the player (near), selling fake depth. In
-  // landscape the near edge is much wider than the goal, which gives a strong,
-  // natural sense of depth.
-  boxFarHalfWidth: 340, // half-width of the box at the goal line (far)
-  boxNearHalfWidth: 600, // half-width of the box at the near edge
-  boxFarY: 380, // far edge sits at the goal line
-  boxNearY: 690, // near edge of the penalty box
+  // Landscape profile (used when the screen is wider than it is tall).
+  landscape: {
+    goalWidthFrac: 0.6, // goal mouth width / screen width
+    goalTopFrac: 0.17, // crossbar y / screen height
+    boxFarPadFrac: 0.02, // far box half-width = goal half-width + this * width
+    boxNearHalfWidthFrac: 0.47, // near box half-width / screen width (sells depth)
+    boxNearYFrac: 0.96, // near edge y / screen height
+    spotYFrac: 0.75, // penalty spot y / screen height
+    ballYFrac: 0.88, // ball rest y / screen height
+    ballRadiusFrac: 0.039, // ball radius / screen height
+  },
 
-  // Penalty spot + ball rest position (near the camera, so it is drawn large).
-  penaltySpotY: 540,
-  ballRestX: 640,
-  ballRestY: 635,
-  ballRadius: 28,
-
-  // Keeper standing pose, centred in the goal. Covers ~1 zone so the CPU is
-  // clearly beatable by corners (PRD §5).
-  keeperX: 640,
-  keeperFeetY: 380, // feet on the goal line
-  keeperHeight: 124,
-  keeperWidth: 58,
+  // Portrait profile (used when the screen is taller than it is wide). The goal
+  // fills more of the narrower width and sits higher, leaving the lower screen
+  // for the run-up — so portrait no longer feels empty.
+  portrait: {
+    goalWidthFrac: 0.92,
+    goalTopFrac: 0.16,
+    boxFarPadFrac: 0.015,
+    boxNearHalfWidthFrac: 0.47,
+    boxNearYFrac: 0.93,
+    spotYFrac: 0.66,
+    ballYFrac: 0.84,
+    ballRadiusFrac: 0.034,
+  },
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -3,10 +3,12 @@
  *
  * The goal mouth is divided into six zones: top and bottom rows × left/middle/
  * right columns. These same zone definitions are used by BOTH the renderer
- * (drawing the grid, Milestone 1) and later the pure resolvePenalty() function
- * (Milestone 4) — one definition, no drift.
+ * (drawing the grid) and later the pure resolvePenalty() (Milestone 4) — one
+ * definition, no drift.
  *
- * Geometry comes from CONFIG.GEOMETRY so moving the goal moves the zones.
+ * The goal rectangle is passed IN (computed responsively in game/layout.ts)
+ * rather than read from fixed config pixels, so zones adapt to any screen size
+ * and stay side-effect-free for the future pure resolver.
  */
 
 import { CONFIG } from '../config';
@@ -24,17 +26,6 @@ export interface Rect {
   height: number;
 }
 
-/** The goal mouth rectangle (the target plane) from config. */
-export function goalRect(): Rect {
-  const g = CONFIG.GEOMETRY;
-  return {
-    x: g.goalLeft,
-    y: g.goalTop,
-    width: g.goalRight - g.goalLeft,
-    height: g.goalBottom - g.goalTop,
-  };
-}
-
 /** Column index 0..2 (L,M,R) and row index 0..1 (T,B) for a zone id. */
 export function zoneIndices(id: ZoneId): { col: number; row: number } {
   const row = id[0] === 'T' ? 0 : 1;
@@ -43,9 +34,8 @@ export function zoneIndices(id: ZoneId): { col: number; row: number } {
   return { col, row };
 }
 
-/** Pixel rectangle of a given zone within the goal mouth. */
-export function zoneRect(id: ZoneId): Rect {
-  const goal = goalRect();
+/** Pixel rectangle of a given zone within the supplied goal mouth. */
+export function zoneRect(id: ZoneId, goal: Rect): Rect {
   const { zoneCols, zoneRows } = CONFIG.GEOMETRY;
   const { col, row } = zoneIndices(id);
   const cellW = goal.width / zoneCols;
@@ -59,14 +49,13 @@ export function zoneRect(id: ZoneId): Rect {
 }
 
 /** Centre point of a zone — the default aim target for that cell. */
-export function zoneCenter(id: ZoneId): { x: number; y: number } {
-  const r = zoneRect(id);
+export function zoneCenter(id: ZoneId, goal: Rect): { x: number; y: number } {
+  const r = zoneRect(id, goal);
   return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
 }
 
 /** Which zone a point on the goal plane falls into (null if outside the goal). */
-export function zoneAtPoint(x: number, y: number): ZoneId | null {
-  const goal = goalRect();
+export function zoneAtPoint(x: number, y: number, goal: Rect): ZoneId | null {
   if (x < goal.x || x > goal.x + goal.width || y < goal.y || y > goal.y + goal.height) {
     return null;
   }

@@ -43,8 +43,9 @@ export class DebugOverlay {
     this.container.setScrollFactor(0);
 
     // Always-present tap target so the overlay can be toggled on a phone.
+    // Anchored to the live right edge so it stays put through resize/rotation.
     this.button = scene.add
-      .text(CONFIG.GAME.width - 8, 8, 'DBG', {
+      .text(scene.scale.width - 8, 8, 'DBG', {
         fontFamily: 'monospace',
         fontSize: '18px',
         color: '#ffffff',
@@ -59,6 +60,11 @@ export class DebugOverlay {
 
     // Desktop keyboard toggle.
     scene.input.keyboard?.on('keydown-' + CONFIG.DEBUG.toggleKey, () => this.toggle());
+
+    // Keep the button pinned to the right edge when the screen size changes.
+    const reanchor = (size: Phaser.Structs.Size) => this.button.setX(size.width - 8);
+    scene.scale.on('resize', reanchor);
+    scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => scene.scale.off('resize', reanchor));
 
     this.applyVisibility();
   }
