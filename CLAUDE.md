@@ -23,7 +23,7 @@ These make later milestones cheap. Get them right; do not shortcut them.
 
 ## File structure
 ```
-index.html              # touch-action:none viewport + portrait "rotate" hint
+index.html              # touch-action:none, viewport pinned (position:fixed) for stable rotation
 vite/config.dev.mjs     # dev server
 vite/config.prod.mjs    # production build (Vercel-ready)
 src/
@@ -64,7 +64,23 @@ src/
   AIM MODEL (game/aim.ts, CONFIG.AIM): decoupled & distance-driven — sideways swipe distance sets the column, upward swipe distance sets the height (short flick = bottom row, long flick = top row). All six zones reachable. reachX/reachLow/reachHigh are the calibration knobs.
 - **Milestone 3 — Ball flight: COMPLETE (in owner playtest — the big "is the feel good?" ⏸ checkpoint).**
   On release the ball launches from the spot along an arc (CONFIG.FLIGHT.arcHeightFrac) with a SUBTLE curve (penalties barely bend — owner note; maxCurve 0.25, small curveGain), shrinking scaleStart→scaleEnd for fake depth, landing at aim target + small power-based scatter (Math.random for now; M4 makes it seeded in resolvePenalty). Haptic kick buzz. Resets after FLIGHT.resetDelay. NO keeper / save-goal yet (M4). Movable ball is its own object; pitch stays static.
-- **Milestone 4 — Taker mode complete: COMPLETE (in owner playtest).**
-  Pure deterministic resolvePenalty() (game/resolve.ts, no Phaser): saveChance = base + zoneMatch·zoneBonus·timingQuality − power·powerPenalty − cornerness·cornerPenalty, seeded roll. InputProvider interface (input/providers.ts): LocalHumanProvider (live swipe → seeded TakerInput via aim.finalizeShot) + CpuProvider keeper (dive zone+timing from CONFIG.CPU_KEEPER.difficulty). GameScene runs a provider-driven kick loop that NEVER branches CPU/human (the M8 keystone): aim → CPU keeper dive → resolve → GOAL/SAVE/MISS banner → reset. Verified: corner+power is unsaveable even on a correct keeper read (PRD risk/reward); loop survives orientation changes (cancel() resolves the pending taker promise).
-- **Aesthetic pass (owner requests, on top of M4):** geometric save model so the result matches the visible ball↔keeper interaction; net shakes on a goal only; celebratory banner zoom (small→pop, goal pulses) + procedural crowd cheer (goal) / groan (save/miss); ball restyled as the adidas "Trionda" (FIFA WC 2026) — white with 3 colour waves + gold, spins in flight.
-- Next: ⏸ owner playtest sign-off, then **Milestone 5 — Keeper mode** (CpuProvider taker + tell + human dive input + timing, resolved through the SAME function).
+- **Milestone 4 — Taker mode complete: COMPLETE (owner playtested + iterated).**
+  InputProvider interface (input/providers.ts): LocalHumanProvider (live swipe → seeded TakerInput via aim.finalizeShot) + CpuProvider keeper (dive zone+timing scaled by CONFIG.CPU_KEEPER.difficulty). GameScene runs a provider-driven kick loop that NEVER branches CPU/human (the M8 keystone): aim → CPU keeper dive → resolve → GOAL/SAVE/MISS banner → reset. The loop uses abortable awaitable tweens/timers and survives orientation changes (LocalHumanProvider.cancel() resolves the pending taker promise with null so the loop can't deadlock — this WAS a real bug, keep it).
+  **RESOLUTION MODEL (game/resolve.ts) — revised after playtest to GEOMETRIC + deterministic** (replaced the PRD §7 probabilistic saveChance, which felt random and made everything a goal): the keeper saves when the ball lands inside its dive REACH — an ellipse (CONFIG.RESOLUTION.reachX/reachY in normalised goal coords) around result.keeperNorm, shrunk by poor timing (timingFloor) and by power (powerReachPenalty); a thin seeded `margin` band decides edge-of-reach shots. Outcome now matches the visible ball↔keeper interaction. Still pure + deterministic (same inputs+seed ⇒ same result) so online replay (M8) is unaffected. resolvePenalty returns keeperNorm so the scene dives the keeper to the SAME point it judged.
+- **Aesthetic pass (owner requests, on top of M4):** net shakes on a goal only; celebratory banner zoom (small→pop, goal pulses) + procedural crowd cheer (goal)/groan (save/miss) in audio/Sfx.ts; ball restyled as the adidas "Trionda" (FIFA WC 2026) — white with 3 colour waves (USA blue, Mexico green, Canada red) + gold, spins in flight. Landscape ball radius enlarged to match portrait.
+
+## Follow-ups / open notes (carry forward)
+- **Sound effects are placeholder** (procedural Web Audio). Owner wants them replaced with better/real crowd samples later. Toggle: CONFIG.SOUND.
+- iOS Safari has **no Vibration API** — haptics only fire on Android. iOS haptic is a possible M7 experiment (fragile switch-element hack).
+- Vercel hosting: owner is connecting the GitHub repo themselves (auto-deploys on push to the working branch). vercel.json is set.
+- Dev-only test hook: GameScene exposes `window.__penalty.resolvePenalty` and `window.__lastResult`/`__lastAim` under import.meta.env.DEV (stripped from prod) — handy for headless verification.
+
+## Milestone 5 — Keeper mode (NEXT). PRD §6 + §13.5
+Flip the roles, reusing everything. Do NOT change resolvePenalty or the loop's CPU/human-agnostic shape.
+- Implement the two provider stubs that currently throw "Milestone 5":
+  - `CpuProvider.getTakerInput()` — commit {targetZone, power, curve} → a seeded TakerInput (reuse aim.finalizeShot-style landing). Use CONFIG.CPU_TAKER (targetWeights, tellStrength, tellLeadTime, flightTime).
+  - `LocalHumanProvider.getKeeperInput()` — read the player's swipe/tap → {diveZone, diveTiming}, where diveTiming is the input moment relative to the strike (resolve already turns it into timingQuality).
+- Solo Keeper mode = CpuProvider (taker) + LocalHumanProvider (keeper) — same loop, swapped providers. Needs a way to enter keeper mode (a minimal mode toggle is fine for now; full Splash→Mode-select menu is M6/§12).
+- CPU taker **telegraphs subtly** a beat before striking (tellStrength/tellLeadTime) so a sharp player can read it; ball has a defined flightTime reaction window. Player dive: timing matters (right moment = full reach; too late = can't get there).
+- In keeper mode the player IS the keeper, so `result.saved` = the player succeeded (scoring counts saves in M6).
+- ⏸ Stop at the checkpoint for owner playtest. Update this file when done.
