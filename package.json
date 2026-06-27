@@ -1,0 +1,19 @@
+{
+  "name": "penalty-shootout",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mobile-first PWA penalty shootout game (Phaser 3 + TypeScript + Vite).",
+  "scripts": {
+    "dev": "vite --config vite/config.dev.mjs",
+    "build": "tsc --noEmit && vite build --config vite/config.prod.mjs",
+    "preview": "vite preview --config vite/config.prod.mjs"
+  },
+  "dependencies": {
+    "phaser": "3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vite": "^6.3.5"
+  }
+}
