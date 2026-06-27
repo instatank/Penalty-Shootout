@@ -57,6 +57,12 @@ const COLORS = {
   keeperGloves: 0xffeb3b,
   keeperSkin: 0xe8b38a,
 
+  // CPU taker (Keeper mode) — a red kit so it reads as the "other team" vs the
+  // blue keeper.
+  takerBody: 0xd32f2f,
+  takerShorts: 0x1a1a1a,
+  takerSkin: 0xc98a5e,
+
   debugText: 0x00ff66,
   debugBg: 0x000000,
 
@@ -99,6 +105,12 @@ const GEOMETRY = {
   keeperHeightFrac: 0.54, // keeper height as a fraction of goal height
   keeperWidthFrac: 0.095, // keeper body width as a fraction of goal width
   // (Keeper covers ~1 zone so the CPU is clearly beatable by corners — PRD §5.)
+
+  // The CPU taker figure (only shown in Keeper mode — M5). It stands behind the
+  // ball, nearer the camera than the keeper, so it is drawn a little bigger. Its
+  // pre-strike body lean is the "tell" the player reads (PRD §6).
+  takerHeightFrac: 0.72, // taker height as a fraction of goal height
+  takerWidthFrac: 0.12, // taker body width as a fraction of goal width
 
   // Landscape profile (used when the screen is wider than it is tall).
   landscape: {
@@ -215,11 +227,42 @@ const CPU_KEEPER = {
 // CPU_TAKER (PRD §6) — opponent in solo Keeper mode. (Not wired until M5.)
 // ─────────────────────────────────────────────────────────────────────────────
 const CPU_TAKER = {
-  tellStrength: 0.6, // how obvious the pre-strike body lean is (0..1)
-  tellLeadTime: 350, // ms the tell appears before the strike
-  flightTime: 800, // ms reaction window for the keeper-player
-  // Relative likelihood the CPU aims at each zone (TL,TM,TR,BL,BM,BR).
+  tellStrength: 0.6, // how obvious the pre-strike body lean is (0..1). Subtle on
+  //  purpose: a sharp player reads it, a casual one shoots blind (PRD §6).
+  tellLeanMaxRad: 0.4, // body-lean angle at tellStrength=1 (radians) — the visual size of a full tell
+  tellLeadTime: 350, // ms the tell (body lean) shows BEFORE the strike
+  flightTime: 800, // ms the ball takes to reach the goal = the keeper's reaction
+  //  window. Lower this to make Keeper mode harder (less time to read + dive).
+  // Relative likelihood the CPU aims at each zone, in ZONE_IDS order
+  // (TL,TM,TR,BL,BM,BR) — corners favoured, centre rare, so most shots are
+  // genuinely savable by reading the side.
   targetWeights: [1.2, 0.7, 1.2, 1.0, 0.6, 1.0],
+  // How hard the CPU strikes (release power 0..1). It hits firmly but not always
+  // flat-out, so power varies the keeper's reach shot to shot.
+  powerMin: 0.55,
+  powerMax: 0.95,
+  curveJitter: 0.1, // small random bend (±) so flights are not all dead straight
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KEEPER (PRD §6) — the HUMAN keeper's dive input in solo Keeper mode. (Wired at
+// Milestone 5.) A flick's DIRECTION picks the dive zone; its TIMING relative to
+// the strike sets reach (resolvePenalty turns the timing into timingQuality).
+// ─────────────────────────────────────────────────────────────────────────────
+const KEEPER = {
+  // Direction → zone. A flick must clear these distances (fractions of the live
+  // screen) to commit a side / a high dive; below them it is a centre / low dive.
+  diveColThreshFrac: 0.05, // sideways flick (fraction of screen WIDTH) to commit Left/Right
+  diveRowThreshFrac: 0.07, // upward flick (fraction of screen HEIGHT) to commit a HIGH dive
+
+  // Timing. The "perfect" dive is committed this many ms AFTER the strike (a
+  // human cannot react in 0ms, so the sweet spot sits a beat after the kick).
+  // resolvePenalty reads diveTiming where 0 = perfect; we map the real dive to
+  // that. Diving earlier (during the tell) or later both drift off-perfect.
+  idealReactMs: 130,
+  diveDuration: 360, // ms for the player-keeper's dive animation
+  readyMs: 550, // a short "set" beat after the ball is placed, before the tell,
+  //  so the next shot does not start the instant the previous one ends.
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,6 +342,7 @@ export const CONFIG = {
   FLIGHT,
   CPU_KEEPER,
   CPU_TAKER,
+  KEEPER,
   RESOLUTION,
   SESSION,
   HAPTICS,

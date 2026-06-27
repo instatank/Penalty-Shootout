@@ -34,6 +34,7 @@ export interface Layout {
   spot: { x: number; y: number };
   ball: { x: number; y: number; r: number };
   keeper: { x: number; feetY: number; w: number; h: number };
+  taker: { x: number; feetY: number; w: number; h: number }; // CPU striker (Keeper mode)
 }
 
 export function computeLayout(width: number, height: number): Layout {
@@ -73,5 +74,15 @@ export function computeLayout(width: number, height: number): Layout {
     h: goalH * G.keeperHeightFrac,
   };
 
-  return { width, height, isLandscape, goal, post, horizonY, box, spot, ball, keeper };
+  // CPU taker (Keeper mode only): stands just behind + beside the ball, nearer
+  // the camera. Offset to the left so the ball sits in front of its kicking side.
+  const takerH = goalH * G.takerHeightFrac;
+  const taker = {
+    x: cx - ball.r * 2.4,
+    feetY: Math.min(height - 4, ball.y + ball.r * 2.6),
+    w: goalW * G.takerWidthFrac,
+    h: takerH,
+  };
+
+  return { width, height, isLandscape, goal, post, horizonY, box, spot, ball, keeper, taker };
 }

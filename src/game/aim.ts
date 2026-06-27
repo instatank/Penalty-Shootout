@@ -14,7 +14,7 @@
  */
 
 import { CONFIG } from '../config';
-import { zoneAtPoint, type ZoneId, type Rect } from './zones';
+import { zoneAtPoint, zoneCenter, zoneFrom, type ZoneId, type Rect } from './zones';
 import type { SwipeSample } from '../input/SwipeInput';
 import { seededRandom, type TakerInput } from './resolve';
 
@@ -59,32 +59,67 @@ export function computeAim(
 }
 
 /**
- * Turn an aim + swipe into the committed TakerInput (PRD §7), applying the
- * power-based accuracy scatter DETERMINISTICALLY from the kick `seed` (so an
- * online opponent replays the identical landing). cornerness measures how tight
- * to the nearest post/bar the ball lands (harder for a keeper to reach).
+ * Land a shot: apply the power-based accuracy scatter DETERMINISTICALLY from the
+ * kick `seed` and package the result as a TakerInput (PRD §7). Shared by BOTH the
+ * human taker (finalizeShot) and the CPU taker (cpuShot) so there is exactly one
+ * scatter rule. Seeded so an online opponent replays the identical landing.
  */
-export function finalizeShot(
-  aim: Aim,
-  swipe: SwipeSample,
+export function landShot(
+  targetX: number,
+  targetY: number,
+  errorRadius: number,
+  targetZone: ZoneId | null,
+  power: number,
+  curve: number,
   goal: Rect,
   seed: number,
 ): TakerInput {
   const ang = seededRandom(seed, 1) * Math.PI * 2;
-  const rad = Math.sqrt(seededRandom(seed, 2)) * aim.errorRadius; // uniform over the disc
-  const landingPoint = { x: aim.targetX + Math.cos(ang) * rad, y: aim.targetY + Math.sin(ang) * rad };
+  const rad = Math.sqrt(seededRandom(seed, 2)) * errorRadius; // uniform over the disc
+  const landingPoint = { x: targetX + Math.cos(ang) * rad, y: targetY + Math.sin(ang) * rad };
   const landingZone = zoneAtPoint(landingPoint.x, landingPoint.y, goal);
   const landingNorm = {
     x: (landingPoint.x - goal.x) / goal.width,
     y: (landingPoint.y - goal.y) / goal.height,
   };
 
-  return {
-    targetZone: aim.targetZone,
-    landingZone,
-    landingNorm,
-    power: swipe.power,
-    curve: swipe.curve,
-    landingPoint,
-  };
+  return { targetZone, landingZone, landingNorm, power, curve, landingPoint };
+}
+
+/**
+ * Turn a human's aim + swipe into the committed TakerInput (PRD §7). Thin wrapper
+ * over landShot using the aim's target point, scatter radius and the swipe's
+ * power/curve.
+ */
+export function finalizeShot(aim: Aim, swipe: SwipeSample, goal: Rect, seed: number): TakerInput {
+  return landShot(aim.targetX, aim.targetY, aim.errorRadius, aim.targetZone, swipe.power, swipe.curve, goal, seed);
+}
+
+/**
+ * Build the CPU taker's committed TakerInput (PRD §6) — Keeper mode. The CPU has
+ * already chosen a {targetZone, power, curve}; we aim at that zone's centre, apply
+ * the SAME power-based scatter as a human (so corners stay reachable but tight),
+ * and land it deterministically from `seed`.
+ */
+export function cpuShot(targetZone: ZoneId, power: number, curve: number, goal: Rect, seed: number): TakerInput {
+  const center = zoneCenter(targetZone, goal);
+  const errorRadius = (CONFIG.INPUT.baseError + CONFIG.INPUT.kPower * power) * goal.width;
+  return landShot(center.x, center.y, errorRadius, targetZone, power, curve, goal, seed);
+}
+
+/**
+ * Map a HUMAN keeper's dive flick to a dive zone (PRD §6) — Keeper mode. The two
+ * axes are independent and distance-driven (mirrors the taker's aim model):
+ *   • sideways flick distance → Left / Centre / Right column
+ *   • upward flick distance   → High (top row) vs Low (bottom row)
+ * A tap or a tiny flick (no clear direction) defends low-centre (BM).
+ */
+export function computeDive(swipe: SwipeSample, screenW: number, screenH: number): ZoneId {
+  const k = CONFIG.KEEPER;
+  const colThresh = screenW * k.diveColThreshFrac;
+  const rowThresh = screenH * k.diveRowThreshFrac;
+
+  const col = swipe.dx < -colThresh ? 0 : swipe.dx > colThresh ? 2 : 1;
+  const row = -swipe.dy > rowThresh ? 0 : 1; // up beyond threshold = High (top)
+  return zoneFrom(col, row);
 }

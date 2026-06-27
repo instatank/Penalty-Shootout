@@ -17,16 +17,22 @@
 
 import Phaser from 'phaser';
 import { CONFIG } from '../../config';
-import { ZONE_IDS, zoneRect, zoneCenter } from '../zones';
+import { ZONE_IDS, zoneRect, zoneCenter, type ZoneId } from '../zones';
 import { computeLayout, type Layout } from '../layout';
-import { computeAim } from '../aim';
+import { computeAim, computeDive } from '../aim';
 import { resolvePenalty, type PenaltyResult, type TakerInput, type KeeperInput } from '../resolve';
-import { LocalHumanProvider, CpuProvider, type PenaltyContext } from '../../input/providers';
+import { LocalHumanProvider, CpuProvider, type InputProvider, type PenaltyContext } from '../../input/providers';
 import { SwipeInput, deriveSwipe, type SwipePhase, type SwipePoint } from '../../input/SwipeInput';
 import { DebugOverlay } from '../../ui/DebugOverlay';
 import { Sfx } from '../../audio/Sfx';
 
-type SceneState = 'aiming' | 'busy';
+// 'aiming' = idle/ready (human aims in Taker mode); 'busy' = a kick is resolving;
+// 'keeping' = the human-keeper's dive window is open (Keeper mode).
+type SceneState = 'aiming' | 'busy' | 'keeping';
+
+// Which role the human plays. Swapping mode = swapping which provider is taker vs
+// keeper — the kick loop itself never changes (PRD §8).
+type GameMode = 'taker' | 'keeper';
 
 export class GameScene extends Phaser.Scene {
   private debug!: DebugOverlay;
@@ -37,17 +43,30 @@ export class GameScene extends Phaser.Scene {
   private ballGfx!: Phaser.GameObjects.Graphics;
   private keeper!: Phaser.GameObjects.Container;
   private keeperGfx!: Phaser.GameObjects.Graphics;
+  private takerFigure!: Phaser.GameObjects.Container; // CPU striker (Keeper mode only)
+  private takerGfx!: Phaser.GameObjects.Graphics;
   private outcomeText!: Phaser.GameObjects.Text;
+  private modeButton!: Phaser.GameObjects.Text; // minimal TAKE/SAVE toggle (full menu = M6)
   private layout!: Layout;
   private sfx = new Sfx();
 
   private state: SceneState = 'aiming';
-  private epoch = 0; // bumps on resize to invalidate an in-flight kick
+  private mode: GameMode = 'taker';
+  private epoch = 0; // bumps on resize / mode switch to invalidate an in-flight kick
   private alive = true;
   private activeResolvers: Array<() => void> = []; // pending awaitable resolvers
 
-  private taker = new LocalHumanProvider();
-  private keeperProvider = new CpuProvider();
+  // The two concrete providers exist for the whole session; the role fields below
+  // point at them and are what the loop reads, so a mode switch is just a swap.
+  private human = new LocalHumanProvider();
+  private cpu = new CpuProvider();
+  private takerProvider: InputProvider = this.human; // Taker mode: human shoots
+  private keeperProvider: InputProvider = this.cpu; //  Taker mode: CPU saves
+
+  // Keeper-mode reaction state: when the strike happens (timing reference) and the
+  // dive the human committed this window (null until they flick).
+  private strikeAt = 0;
+  private diveCaptured: { zone: ZoneId; timing: number } | null = null;
 
   constructor() {
     super('GameScene');
@@ -65,6 +84,15 @@ export class GameScene extends Phaser.Scene {
     this.ball = this.add.container(0, 0, [this.ballGfx]).setDepth(400);
     this.keeperGfx = this.add.graphics();
     this.keeper = this.add.container(0, 0, [this.keeperGfx]).setDepth(380);
+    // CPU striker — only shown in Keeper mode. Below the ball's depth so the ball
+    // passes in front of it as it is struck.
+    this.takerGfx = this.add.graphics();
+    this.takerFigure = this.add.container(0, 0, [this.takerGfx]).setDepth(390).setVisible(false);
+
+    // The human keeper's dive flows through the SAME LocalHumanProvider. When the
+    // loop awaits its keeper input, the provider asks us (here) to present the CPU
+    // shot so the human can watch and dive.
+    this.human.onAwaitKeeper = (ctx, taker) => this.beginKeeperReaction(ctx, taker);
 
     this.rebuild(this.scale.width, this.scale.height);
 
@@ -77,12 +105,33 @@ export class GameScene extends Phaser.Scene {
       .setDepth(900)
       .setVisible(false);
 
+    // Minimal mode toggle (full Splash → Mode-select menu is Milestone 6 / §12).
+    // Lives in the lower thumb zone (PRD §12). Tap, or press "M", to switch.
+    this.modeButton = this.add
+      .text(8, this.scale.height - 8, 'MODE: TAKE', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#ffffff',
+        backgroundColor: '#00000088',
+        padding: { x: 8, y: 6 },
+      })
+      .setOrigin(0, 1)
+      .setDepth(1001)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+    this.modeButton.on('pointerup', () => this.toggleMode());
+    this.input.keyboard?.on('keydown-M', () => this.toggleMode());
+
     this.debug = new DebugOverlay(this);
     this.showIdleDebug();
 
     // Dev-only hook for headless tests (stripped from production).
     if (import.meta.env.DEV) {
-      (window as unknown as Record<string, unknown>).__penalty = { resolvePenalty };
+      (window as unknown as Record<string, unknown>).__penalty = {
+        resolvePenalty,
+        getState: () => ({ mode: this.mode, state: this.state, diveCaptured: this.diveCaptured }),
+        setMode: (m: GameMode) => this.setMode(m),
+      };
     }
 
     // Input layer (PRD §4). Self-cleans on shutdown.
@@ -106,17 +155,20 @@ export class GameScene extends Phaser.Scene {
 
         const ctx: PenaltyContext = { seed: this.makeSeed(), goal: this.layout.goal };
 
-        // Taker action: a real swipe (LocalHumanProvider). null = cancelled (resize).
-        const taker = await this.taker.getTakerInput(ctx).catch(() => null);
+        // Taker action. Taker mode: a real swipe (human). Keeper mode: CPU shot.
+        // null = cancelled (resize / mode switch) → retry.
+        const taker = await this.takerProvider.getTakerInput(ctx).catch(() => null);
         if (!taker || epoch !== this.epoch) continue;
 
         this.state = 'busy';
-        const keeper = await this.keeperProvider.getKeeperInput(ctx, taker);
-        if (epoch !== this.epoch) continue;
+        // Keeper action. Taker mode: CPU dive (instant). Keeper mode: the human's
+        // dive, captured while the scene plays the shot. null = cancelled → retry.
+        const keeper = await this.keeperProvider.getKeeperInput(ctx, taker).catch(() => null);
+        if (!keeper || epoch !== this.epoch) continue;
 
         const result = resolvePenalty(taker, keeper, ctx.seed);
 
-        await this.animateKick(taker, keeper, result);
+        await this.revealKick(taker, keeper, result);
         if (epoch !== this.epoch) continue;
         await this.showOutcome(result);
         if (epoch !== this.epoch) continue;
@@ -136,27 +188,94 @@ export class GameScene extends Phaser.Scene {
   private enterAiming(): void {
     this.abortAll();
     this.state = 'aiming';
+    this.diveCaptured = null;
     this.fx.clear();
     this.outcomeText.setVisible(false);
     this.netGfx.setPosition(0, 0); // cancel any leftover shake
     this.resetBall();
     this.resetKeeper();
+    this.resetTaker();
     this.showIdleDebug();
   }
 
   private onResize(gameSize: Phaser.Structs.Size): void {
     this.epoch++; // invalidate the current kick's post-await steps
-    this.taker.cancel(); // unblock a pending aim wait
+    this.human.cancel(); // unblock a pending aim / dive wait
     this.abortAll(); // resolve any pending animations/delays
     this.rebuild(gameSize.width, gameSize.height);
     this.fx.clear();
     this.outcomeText.setPosition(gameSize.width / 2, gameSize.height * 0.42);
+    this.modeButton?.setY(gameSize.height - 8); // keep pinned to the bottom edge
     this.showIdleDebug();
   }
 
-  // ── Input → aim preview while aiming; commit the shot on release ───────────
+  // ── Mode toggle (minimal — full menu is Milestone 6) ──────────────────────
+  private toggleMode(): void {
+    this.setMode(this.mode === 'taker' ? 'keeper' : 'taker');
+  }
+
+  private setMode(mode: GameMode): void {
+    this.mode = mode;
+    // Swap which provider is the taker and which is the keeper. THIS is the whole
+    // mode switch — the loop and resolvePenalty are untouched (PRD §8).
+    if (mode === 'taker') {
+      this.takerProvider = this.human; // human shoots
+      this.keeperProvider = this.cpu; // CPU saves
+    } else {
+      this.takerProvider = this.cpu; // CPU shoots
+      this.keeperProvider = this.human; // human saves
+    }
+    this.modeButton.setText('MODE: ' + (mode === 'taker' ? 'TAKE' : 'SAVE'));
+
+    // Tear down any in-flight kick and let the loop restart with the new roles.
+    this.epoch++;
+    this.human.cancel();
+    this.enterAiming();
+  }
+
+  // ── Input router: aim (Taker mode) vs dive (Keeper mode) ──────────────────
   private onSwipe(phase: SwipePhase, points: SwipePoint[]): void {
     if (phase === 'start') this.sfx.unlock(); // first touch unlocks Web Audio
+
+    if (this.mode === 'keeper') {
+      this.onDiveSwipe(phase, points);
+      return;
+    }
+    this.onAimSwipe(phase, points);
+  }
+
+  // Keeper mode: a flick during the open dive window commits a dive (PRD §6).
+  private onDiveSwipe(phase: SwipePhase, points: SwipePoint[]): void {
+    if (this.state !== 'keeping') return; // window not open yet / already closed
+    if (phase !== 'end') return; // commit on release (one dive per window)
+    if (this.diveCaptured) return; // already dived this window — locked in
+    if (points.length < 2) return;
+
+    const sample = deriveSwipe(points, this.scale.height);
+    const zone = computeDive(sample, this.scale.width, this.scale.height);
+
+    // Timing: how far the dive's start was from the "perfect" moment. The strike
+    // is the reference; idealReactMs is the human-reaction sweet spot after it.
+    // resolvePenalty reads diveTiming where 0 = perfect (PRD §7).
+    const sinceStrike = sample.start.t - this.strikeAt;
+    const diveTiming = sinceStrike - CONFIG.KEEPER.idealReactMs;
+    this.diveCaptured = { zone, timing: diveTiming };
+
+    // Dive the keeper to the chosen zone NOW (the human sees their reaction). The
+    // window still closes on its timer, so the full flight plays out either way.
+    const hp = zoneCenter(zone, this.layout.goal);
+    this.diveKeeperTo(hp.x, hp.y, CONFIG.KEEPER.diveDuration);
+
+    this.debug.setLines([
+      'DIVE',
+      'zone ' + zone + (sinceStrike < 0 ? '   (early commit)' : ''),
+      'since strike ' + Math.round(sinceStrike) + 'ms',
+      'timing off ' + Math.round(diveTiming) + 'ms',
+    ]);
+  }
+
+  // Taker mode: live aim preview while aiming; commit the shot on release.
+  private onAimSwipe(phase: SwipePhase, points: SwipePoint[]): void {
     if (this.state !== 'aiming') return; // ignore input while a kick is resolving
 
     if (points.length < 2) {
@@ -191,33 +310,36 @@ export class GameScene extends Phaser.Scene {
       'target ' + (aim.targetZone ?? 'MISS (wide/over)'),
     ]);
 
-    if (phase === 'end') this.taker.submitSwipe(sample, aim); // hand off to the loop
+    if (phase === 'end') this.human.submitSwipe(sample, aim); // hand off to the loop
   }
 
-  // ── Animate the ball flight + keeper dive together ────────────────────────
-  private async animateKick(taker: TakerInput, keeper: KeeperInput, result: PenaltyResult): Promise<void> {
-    const F = CONFIG.FLIGHT;
-    const K = CONFIG.CPU_KEEPER;
+  // ── Reveal the outcome ────────────────────────────────────────────────────
+  // One entry point for the loop; the presentation differs by MODE (not by who
+  // produced the input — the loop stays provider-agnostic). In Taker mode the
+  // flight is the reveal; in Keeper mode the flight already played during the
+  // human's reaction, so we only settle the result.
+  private async revealKick(taker: TakerInput, keeper: KeeperInput, result: PenaltyResult): Promise<void> {
+    if (this.mode === 'keeper') return this.settleKeeperOutcome(result);
+    return this.revealTakerKick(taker, keeper, result);
+  }
+
+  // Taker mode: the human has shot; the CPU keeper dives and the ball flies. The
+  // dive goes to result.keeperNorm so the visible dive and the outcome agree.
+  private async revealTakerKick(taker: TakerInput, keeper: KeeperInput, result: PenaltyResult): Promise<void> {
     const goal = this.layout.goal;
     const start = { x: this.layout.ball.x, y: this.layout.ball.y };
-
-    // Keeper dives to the SAME point the resolver used (result.keeperNorm), so
-    // the visible dive and the outcome always agree. Hands reach (handX, handY).
     const handX = goal.x + result.keeperNorm.x * goal.width;
     const handY = goal.y + result.keeperNorm.y * goal.height;
-    const feetX = handX;
-    const feetY = handY + this.layout.keeper.h * 0.5; // place the body so the gloves cover handY
-    const lean = Phaser.Math.Clamp((handX - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.7;
-    this.time.delayedCall(K.reactionDelay, () => {
-      this.tweens.add({ targets: this.keeper, x: feetX, y: feetY, rotation: lean, duration: K.diveDuration, ease: 'Quad.easeOut' });
-    });
+
+    // CPU keeper dives after its reaction delay (it is reacting to the shot).
+    this.time.delayedCall(CONFIG.CPU_KEEPER.reactionDelay, () =>
+      this.diveKeeperTo(handX, handY, CONFIG.CPU_KEEPER.diveDuration),
+    );
 
     // Ball end: a save meets the keeper's gloves; otherwise its landing point.
     const end = result.saved ? { x: handX, y: handY } : taker.landingPoint;
     this.drawLandingMarker(taker.landingPoint);
-
-    const arcPx = this.scale.height * F.arcHeightFrac;
-    const bendPx = taker.curve * F.curveGain * goal.width;
+    const bendPx = taker.curve * CONFIG.FLIGHT.curveGain * goal.width;
     if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
 
     this.debug.setLines([
@@ -227,11 +349,90 @@ export class GameScene extends Phaser.Scene {
       'timing ' + result.timingQuality.toFixed(2) + '   reach ' + result.reachMargin.toFixed(2),
     ]);
 
+    await this.flyBall(start, end, bendPx, CONFIG.FLIGHT.flightDuration);
+    if (result.saved) await this.deflectBall(handX, handY);
+  }
+
+  // Keeper mode: the ball + the player's dive already animated during the
+  // reaction. A save just adds the deflection off the gloves; a goal is already
+  // in the net.
+  private async settleKeeperOutcome(result: PenaltyResult): Promise<void> {
+    if (!result.saved) return;
+    const goal = this.layout.goal;
+    const handX = goal.x + result.keeperNorm.x * goal.width;
+    const handY = goal.y + result.keeperNorm.y * goal.height;
+    await this.deflectBall(handX, handY);
+  }
+
+  // ── Keeper-mode reaction (Milestone 5) ────────────────────────────────────
+  // Present the CPU taker's committed shot so the human can read it and dive:
+  //   ready beat → subtle body-lean tell → strike → ball flight (the dive window).
+  // Called (synchronously) when the human keeper's getKeeperInput() begins; it
+  // schedules everything and resolves that input via submitDive() when the window
+  // closes — so by the time the loop resolves the kick, the flight is complete.
+  private beginKeeperReaction(_ctx: PenaltyContext, taker: TakerInput): void {
+    const C = CONFIG.CPU_TAKER;
+    const goal = this.layout.goal;
+    const start = { x: this.layout.ball.x, y: this.layout.ball.y };
+    const end = taker.landingPoint;
+    const bendPx = taker.curve * CONFIG.FLIGHT.curveGain * goal.width;
+
+    this.diveCaptured = null;
+    this.state = 'busy'; // not diveable yet — the "set" beat
+    this.fx.clear();
+
+    // Dev-only: expose the committed CPU shot for headless tests (stripped from prod).
+    if (import.meta.env.DEV) (window as unknown as { __lastTaker?: unknown }).__lastTaker = taker;
+
+    // The body-lean tell points to the shot's side (read it to dive early).
+    const tellSide = taker.landingNorm.x - 0.5; // <0 = the keeper's right side, etc.
+
+    // Pre-compute the strike instant so an EARLY commit (during the tell) can be
+    // timed against it too ("early commit is allowed but locks you in" — PRD §6).
+    const now = performance.now();
+    this.strikeAt = now + CONFIG.KEEPER.readyMs + C.tellLeadTime;
+
+    // Ready → tell: lean the striker; open the dive window (early commit allowed).
+    this.time.delayedCall(CONFIG.KEEPER.readyMs, () => {
+      this.state = 'keeping';
+      this.showTakerTell(tellSide);
+      this.debug.setLines(['KEEPER MODE', 'read the striker…', 'swipe to dive']);
+    });
+
+    // Strike → launch the flight (the dive window stays open through it).
+    this.time.delayedCall(CONFIG.KEEPER.readyMs + C.tellLeadTime, () => {
+      this.kickTakerFigure(tellSide);
+      if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
+      void this.flyBall(start, end, bendPx, C.flightTime);
+    });
+
+    // Window close: hand the dive (or a "no dive") back to the loop. The small
+    // grace lets the ball visibly reach the goal before a no-dive is judged.
+    const windowMs = CONFIG.KEEPER.readyMs + C.tellLeadTime + C.flightTime + CONFIG.UI.betweenKicksMs;
+    this.time.delayedCall(windowMs, () => {
+      if (!this.human.isAwaitingKeeper()) return;
+      this.state = 'busy';
+      if (this.diveCaptured) {
+        this.human.submitDive(this.diveCaptured.zone, this.diveCaptured.timing);
+      } else {
+        // Frozen keeper: a centre stance with the worst possible timing, so only a
+        // shot hit straight at them is stopped (PRD §6 — react or concede).
+        this.human.submitDive('BM', CONFIG.RESOLUTION.timingWindowMs * 10);
+      }
+    });
+  }
+
+  // ── Shared animation helpers ──────────────────────────────────────────────
+  /** Fly the ball start→end over durationMs with the arc, curve, depth-scale and
+   *  spin used everywhere. Returns when the flight finishes. */
+  private flyBall(start: { x: number; y: number }, end: { x: number; y: number }, bendPx: number, durationMs: number): Promise<void> {
+    const F = CONFIG.FLIGHT;
+    const arcPx = this.scale.height * F.arcHeightFrac;
     const prog = { t: 0 };
-    await this.tweenP({
+    return this.tweenP({
       targets: prog,
       t: 1,
-      duration: F.flightDuration,
+      duration: durationMs,
       ease: F.easing,
       onUpdate: () => {
         const t = prog.t;
@@ -239,21 +440,43 @@ export class GameScene extends Phaser.Scene {
         const y = start.y + (end.y - start.y) * t - arcPx * Math.sin(Math.PI * t);
         this.ball.setPosition(x, y);
         this.ball.setScale(F.scaleStart + (F.scaleEnd - F.scaleStart) * t);
-        this.ball.setRotation(t * Math.PI * 2 * F.spinTurns); // spin the ball in flight
+        this.ball.setRotation(t * Math.PI * 2 * F.spinTurns);
       },
     });
+  }
 
-    // On a save, the ball deflects off the keeper (a short rebound out + down).
-    if (result.saved) {
-      const dir = handX <= this.layout.keeper.x ? -1 : 1;
-      await this.tweenP({
-        targets: this.ball,
-        x: handX + dir * goal.width * 0.08,
-        y: handY + goal.height * 0.22,
-        duration: 200,
-        ease: 'Quad.easeOut',
-      });
-    }
+  /** Dive the keeper so its gloves reach (handX, handY), leaning into the dive. */
+  private diveKeeperTo(handX: number, handY: number, durationMs: number): void {
+    const goal = this.layout.goal;
+    const feetY = handY + this.layout.keeper.h * 0.5; // place the body so the gloves cover handY
+    const lean = Phaser.Math.Clamp((handX - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.7;
+    this.tweens.add({ targets: this.keeper, x: handX, y: feetY, rotation: lean, duration: durationMs, ease: 'Quad.easeOut' });
+  }
+
+  /** Short rebound off the keeper's gloves after a save. */
+  private deflectBall(handX: number, handY: number): Promise<void> {
+    const goal = this.layout.goal;
+    const dir = handX <= this.layout.keeper.x ? -1 : 1;
+    return this.tweenP({
+      targets: this.ball,
+      x: handX + dir * goal.width * 0.08,
+      y: handY + goal.height * 0.22,
+      duration: 200,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  /** The pre-strike tell: lean the striker toward the shot side (PRD §6). The
+   *  lean is scaled by tellStrength so it stays subtle. */
+  private showTakerTell(side: number): void {
+    const C = CONFIG.CPU_TAKER;
+    const lean = Phaser.Math.Clamp(side * 2, -1, 1) * C.tellLeanMaxRad * C.tellStrength;
+    this.tweens.add({ targets: this.takerFigure, rotation: lean, duration: C.tellLeadTime, ease: 'Sine.easeInOut' });
+  }
+
+  /** A quick scale punch at the moment of the strike. */
+  private kickTakerFigure(_side: number): void {
+    this.tweens.add({ targets: this.takerFigure, scaleX: 1.06, scaleY: 0.96, duration: 110, yoyo: true, ease: 'Quad.easeOut' });
   }
 
   private async showOutcome(result: PenaltyResult): Promise<void> {
@@ -267,36 +490,41 @@ export class GameScene extends Phaser.Scene {
           : CONFIG.COLORS.outcomeMiss;
 
     const isGoal = result.outcome === 'goal';
+    // Whether the PLAYER won this kick — and so what we celebrate. Taker mode: a
+    // goal. Keeper mode: a save (PRD §6 — the player is the keeper). The crowd +
+    // banner emotion follows this, not the raw outcome.
+    const playerWon = this.mode === 'keeper' ? result.saved : result.scored;
 
     if (CONFIG.HAPTICS.enabled) {
       const ms = result.saved ? CONFIG.HAPTICS.saveMs : result.scored ? CONFIG.HAPTICS.goalMs : 0;
       if (ms) navigator.vibrate?.(ms);
     }
 
-    // Crowd: cheer on a goal, groan on a save/miss.
-    if (isGoal) this.sfx.cheer();
+    // Crowd: cheer when the player wins the kick, groan otherwise.
+    if (playerWon) this.sfx.cheer();
     else this.sfx.groan();
 
-    // The net shakes ONLY when the ball actually hits it (a goal).
+    // The net shakes ONLY when the ball actually hits it (a physical goal),
+    // whichever mode we are in.
     if (isGoal) this.shakeNet();
 
     this.outcomeText
       .setText(label)
       .setColor('#' + color.toString(16).padStart(6, '0'))
-      .setFontSize(Math.round(Math.min(this.scale.width, this.scale.height) * (isGoal ? 0.18 : 0.15)) + 'px')
+      .setFontSize(Math.round(Math.min(this.scale.width, this.scale.height) * (playerWon ? 0.18 : 0.15)) + 'px')
       .setPosition(this.scale.width / 2, this.scale.height * 0.42)
       .setVisible(true)
       .setScale(0.2)
       .setAlpha(1);
 
-    // Celebratory zoom: small → overshoot → settle; a goal pops bigger + pulses.
+    // Celebratory zoom: small → overshoot → settle; a player win pops + pulses.
     this.tweens.add({
       targets: this.outcomeText,
-      scale: isGoal ? CONFIG.UI.goalZoomPeak : 1.0,
-      duration: isGoal ? 300 : 220,
+      scale: playerWon ? CONFIG.UI.goalZoomPeak : 1.0,
+      duration: playerWon ? 300 : 220,
       ease: 'Back.easeOut',
       onComplete: () => {
-        if (isGoal) {
+        if (playerWon) {
           this.tweens.add({ targets: this.outcomeText, scale: CONFIG.UI.goalZoomPeak * 0.86, duration: 480, yoyo: true, repeat: 1, ease: 'Sine.easeInOut' });
         }
       },
@@ -412,6 +640,7 @@ export class GameScene extends Phaser.Scene {
 
     this.resetBall();
     this.resetKeeper();
+    this.resetTaker();
   }
 
   private resetBall(): void {
@@ -425,14 +654,22 @@ export class GameScene extends Phaser.Scene {
     this.keeper.setRotation(0).setPosition(k.x, k.feetY);
   }
 
+  /** Reset the CPU striker, shown only in Keeper mode. */
+  private resetTaker(): void {
+    const t = this.layout.taker;
+    this.drawTakerGraphic(t.w, t.h);
+    this.takerFigure.setRotation(0).setScale(1).setPosition(t.x, t.feetY).setVisible(this.mode === 'keeper');
+  }
+
   private showIdleDebug(): void {
     const l = this.layout;
+    const keeperMode = this.mode === 'keeper';
     this.debug.setLines([
       'PENALTY SHOOTOUT',
-      'Milestone 4 — Taker mode',
+      'Milestone 5 — ' + (keeperMode ? 'Keeper mode (you save)' : 'Taker mode (you shoot)'),
       (l.isLandscape ? 'landscape' : 'portrait') + ' ' + Math.round(l.width) + 'x' + Math.round(l.height),
-      'swipe to shoot →  beat the keeper',
-      'tap DBG to hide',
+      keeperMode ? 'read the striker → swipe to dive' : 'swipe to shoot →  beat the keeper',
+      'tap MODE to switch · DBG to hide',
     ]);
   }
 
@@ -609,5 +846,27 @@ export class GameScene extends Phaser.Scene {
 
     g.fillStyle(CONFIG.COLORS.keeperSkin, 1);
     g.fillCircle(0, -h + headR * 0.2, headR);
+  }
+
+  // CPU taker (Keeper mode) — a simple back-view striker, FEET at the local origin
+  // so a rotation reads as a body lean (the tell). Kept deliberately minimal.
+  private drawTakerGraphic(w: number, h: number): void {
+    const C = CONFIG.COLORS;
+    const g = this.takerGfx;
+    g.clear();
+    const headR = w * 0.32;
+    const legW = w * 0.34;
+    const legTop = -h * 0.42; // legs from here down to the feet (origin)
+
+    // Legs (two), then shorts band, torso, head — drawn bottom-up.
+    g.fillStyle(C.takerShorts, 1);
+    g.fillRoundedRect(-w / 2, legTop, legW, -legTop, Math.max(3, w * 0.1));
+    g.fillRoundedRect(w / 2 - legW, legTop, legW, -legTop, Math.max(3, w * 0.1));
+
+    g.fillStyle(C.takerBody, 1);
+    g.fillRoundedRect(-w / 2, -h + headR, w, -(-h + headR) + legTop, Math.max(6, w * 0.16));
+
+    g.fillStyle(C.takerSkin, 1);
+    g.fillCircle(0, -h + headR * 0.9, headR);
   }
 }
