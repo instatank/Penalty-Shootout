@@ -111,7 +111,11 @@ const GEOMETRY = {
     ballYFrac: 0.8, // ball rest y / screen height — lifted from 0.88 so the ball
     //  sits clear of the iOS home-swipe bar at the bottom in landscape (starting
     //  a swipe there must not trigger the phone's home gesture).
-    ballRadiusFrac: 0.039, // ball radius / screen height
+    ballRadiusFrac: 0.072, // ball radius / screen height. Raised from 0.039:
+    //  in landscape the screen height is the SHORT side, so the old value made
+    //  the ball much smaller than in portrait. ~0.034 × a typical phone aspect
+    //  ratio makes the landscape ball match the (good) portrait ball, which also
+    //  fixes it being too small by the time it reaches the goal.
   },
 
   // Portrait profile (used when the screen is taller than it is wide). The goal
