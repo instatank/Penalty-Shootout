@@ -1,33 +1,39 @@
 /**
- * GameScene.ts — Milestone 1 static scene (now RESPONSIVE).
+ * GameScene.ts — Milestone 3: ball flight from the swipe (RESPONSIVE).
  *
  * Draws the whole pitch procedurally (no sprite art in v2): a dark stadium
  * backdrop, a perspective penalty box, the goal frame + net, the 3x2 aiming
- * grid, a keeper in goal, and the ball on the spot.
+ * grid, a keeper in goal, and the ball on the spot. On release the ball LAUNCHES
+ * along an arc (+ subtle curve) to its landing point, shrinking as it travels
+ * for fake depth, then resets to the spot.
  *
  * Responsive: every visual is positioned from a Layout computed for the LIVE
- * canvas size (game/layout.ts), so the scene fills any screen with no letterbox
- * bars and adapts to portrait or landscape. On resize / orientation change the
- * scene recomputes the layout and redraws.
+ * canvas size (game/layout.ts). On resize / orientation change the scene
+ * recomputes the layout and redraws.
  *
- * There is NO input and NO ball flight yet — those arrive in Milestones 2–3.
- * Every position reads from CONFIG via the layout, so the scene is fully
- * tunable from config.ts (architecture RULE 1).
+ * There is NO keeper logic / save-goal resolution yet — that is Milestone 4.
+ * Every position reads from CONFIG via the layout (architecture RULE 1).
  */
 
 import Phaser from 'phaser';
 import { CONFIG } from '../../config';
-import { ZONE_IDS, zoneRect, zoneCenter } from '../zones';
+import { ZONE_IDS, zoneRect, zoneCenter, zoneAtPoint } from '../zones';
 import { computeLayout, type Layout } from '../layout';
 import { computeAim } from '../aim';
 import { SwipeInput, deriveSwipe, type SwipePhase, type SwipePoint } from '../../input/SwipeInput';
 import { DebugOverlay } from '../../ui/DebugOverlay';
 
+type SceneState = 'idle' | 'flying';
+
 export class GameScene extends Phaser.Scene {
   private debug!: DebugOverlay;
   private world!: Phaser.GameObjects.Container; // all pitch visuals live here
   private fx!: Phaser.GameObjects.Graphics; // swipe / aim feedback overlay
+  private ball!: Phaser.GameObjects.Container; // the movable ball (flies on release)
+  private ballGfx!: Phaser.GameObjects.Graphics; // ball drawing inside the container
   private layout!: Layout;
+  private state: SceneState = 'idle';
+  private flightTween?: Phaser.Tweens.Tween;
 
   constructor() {
     super('GameScene');
@@ -36,6 +42,10 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     // Container we can wipe and rebuild whenever the screen size changes.
     this.world = this.add.container(0, 0);
+
+    // The ball is a persistent, movable object (the pitch behind it is static).
+    this.ballGfx = this.add.graphics();
+    this.ball = this.add.container(0, 0, [this.ballGfx]).setDepth(400);
 
     this.rebuild(this.scale.width, this.scale.height);
 
@@ -59,13 +69,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onResize(gameSize: Phaser.Structs.Size): void {
+    this.flightTween?.stop();
+    this.flightTween = undefined;
+    this.state = 'idle';
     this.rebuild(gameSize.width, gameSize.height);
     this.fx.clear(); // any in-flight swipe feedback is stale after a resize
+    this.resetBall();
     this.showIdleDebug();
   }
 
-  // ── Input → live aim preview + debug readout (no ball flight yet, M2) ──────
+  // ── Input → live aim preview, then launch on release ──────────────────────
   private onSwipe(phase: SwipePhase, points: SwipePoint[]): void {
+    if (this.state !== 'idle') return; // ignore input while the ball is in flight
+
     if (points.length < 2) {
       // Just a touch-down so far — nothing to derive.
       if (phase === 'start') this.fx.clear();
@@ -102,6 +118,72 @@ export class GameScene extends Phaser.Scene {
       'errR ' + Math.round(aim.errorRadius) + 'px',
       'target ' + (aim.targetZone ?? 'MISS (wide/over)'),
     ]);
+
+    if (phase === 'end') this.launch(sample, aim);
+  }
+
+  // ── Ball flight (PRD §5) ──────────────────────────────────────────────────
+  private launch(sample: ReturnType<typeof deriveSwipe>, aim: ReturnType<typeof computeAim>): void {
+    const F = CONFIG.FLIGHT;
+    const goal = this.layout.goal;
+    const start = { x: this.layout.ball.x, y: this.layout.ball.y };
+
+    // Landing = aimed point + a small random scatter within errorRadius. Error
+    // is tiny at low power and grows with power (PRD §5 risk/reward). M4 will
+    // make this deterministic via a seed inside resolvePenalty().
+    const ang = Math.random() * Math.PI * 2;
+    const rad = Math.sqrt(Math.random()) * aim.errorRadius;
+    const land = { x: aim.targetX + Math.cos(ang) * rad, y: aim.targetY + Math.sin(ang) * rad };
+    const landingZone = zoneAtPoint(land.x, land.y, goal);
+
+    const arcPx = this.scale.height * F.arcHeightFrac;
+    const bendPx = sample.curve * F.curveGain * goal.width;
+
+    this.state = 'flying';
+    this.fx.clear();
+    this.drawLandingMarker(land);
+    if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
+
+    this.debug.setLines([
+      'FLIGHT',
+      'power ' + sample.power.toFixed(2) + '   curve ' + (sample.curve >= 0 ? '+' : '') + sample.curve.toFixed(2),
+      'landing ' + (landingZone ?? 'WIDE / OVER'),
+      '(no keeper yet — M4)',
+    ]);
+
+    const prog = { t: 0 };
+    this.flightTween = this.tweens.add({
+      targets: prog,
+      t: 1,
+      duration: F.flightDuration,
+      ease: F.easing,
+      onUpdate: () => {
+        const t = prog.t;
+        const x = start.x + (land.x - start.x) * t + bendPx * Math.sin(Math.PI * t);
+        const y =
+          start.y + (land.y - start.y) * t - arcPx * Math.sin(Math.PI * t);
+        const scale = F.scaleStart + (F.scaleEnd - F.scaleStart) * t;
+        this.ball.setPosition(x, y);
+        this.ball.setScale(scale);
+      },
+      onComplete: () => {
+        this.time.delayedCall(F.resetDelay, () => {
+          if (this.state === 'flying') {
+            this.fx.clear();
+            this.resetBall();
+            this.state = 'idle';
+            this.showIdleDebug();
+          }
+        });
+      },
+    });
+  }
+
+  private drawLandingMarker(p: { x: number; y: number }): void {
+    const g = this.fx;
+    const r = Math.max(5, this.layout.ball.r * 0.35);
+    g.lineStyle(3, CONFIG.COLORS.aimReticle, 0.9);
+    g.strokeCircle(p.x, p.y, r);
   }
 
   private drawSwipeFeedback(points: SwipePoint[], aim: ReturnType<typeof computeAim>): void {
@@ -149,16 +231,25 @@ export class GameScene extends Phaser.Scene {
     this.drawNet();
     this.drawZoneGrid();
     this.drawKeeper();
-    this.drawBall();
+    this.drawBallShadow(); // static shadow on the spot (the ball itself is separate)
+
+    this.resetBall(); // size + park the movable ball on the spot
+  }
+
+  /** Park the ball on the penalty spot at full size (idle pose). */
+  private resetBall(): void {
+    this.drawBallGraphic(this.layout.ball.r);
+    this.ball.setScale(1);
+    this.ball.setPosition(this.layout.ball.x, this.layout.ball.y);
   }
 
   private showIdleDebug(): void {
     const l = this.layout;
     this.debug.setLines([
       'PENALTY SHOOTOUT',
-      'Milestone 2 — input layer',
+      'Milestone 3 — ball flight',
       (l.isLandscape ? 'landscape' : 'portrait') + ' ' + Math.round(l.width) + 'x' + Math.round(l.height),
-      'swipe to aim →',
+      'swipe to shoot →',
       'tap DBG to hide',
     ]);
   }
@@ -321,26 +412,30 @@ export class GameScene extends Phaser.Scene {
     g.fillCircle(cx, feetY - h + headR * 0.2, headR);
   }
 
-  // ── Ball: white circle on the penalty spot with a pentagon hint ───────────
-  private drawBall(): void {
+  // ── Static ground shadow on the penalty spot (the ball lifts off it) ──────
+  private drawBallShadow(): void {
     const ball = this.layout.ball;
     const g = this.g();
-
-    // Soft ground shadow under the ball.
     g.fillStyle(0x000000, 0.22);
     g.fillEllipse(ball.x, ball.y + ball.r * 0.9, ball.r * 1.8, ball.r * 0.5);
+  }
+
+  // ── Ball drawing (into the movable container, at local origin) ────────────
+  private drawBallGraphic(r: number): void {
+    const g = this.ballGfx;
+    g.clear();
 
     // Ball body.
     g.fillStyle(CONFIG.COLORS.ball, 1);
-    g.fillCircle(ball.x, ball.y, ball.r);
+    g.fillCircle(0, 0, r);
 
     // Pentagon panel hint in the centre.
     g.fillStyle(CONFIG.COLORS.ballPanel, 1);
-    const pr = ball.r * 0.42;
+    const pr = r * 0.42;
     const pts: Phaser.Types.Math.Vector2Like[] = [];
     for (let i = 0; i < 5; i++) {
       const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
-      pts.push({ x: ball.x + Math.cos(a) * pr, y: ball.y + Math.sin(a) * pr });
+      pts.push({ x: Math.cos(a) * pr, y: Math.sin(a) * pr });
     }
     g.fillPoints(pts as Phaser.Geom.Point[], true);
   }

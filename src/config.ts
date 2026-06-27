@@ -132,8 +132,9 @@ const INPUT = {
   //  independent: scales with screen size.
 
   // Curve = signed lateral deviation of the path midpoint from the straight
-  // start→end line, as a fraction of swipe length, capped here (low — penalty).
-  maxCurve: 0.35,
+  // start→end line, as a fraction of swipe length, capped LOW — penalties barely
+  // bend, so this is for subtle effect only, never a banana kick (owner note).
+  maxCurve: 0.25,
 
   // Accuracy scatter: errorRadius = (baseError + kPower * power) * goalWidth.
   // Fractions of goal width so the scatter scales with screen. Used for the M2
@@ -163,11 +164,14 @@ const AIM = {
 // FLIGHT (PRD §5) — ball travel + fake depth. (Not wired until Milestone 3.)
 // ─────────────────────────────────────────────────────────────────────────────
 const FLIGHT = {
-  flightDuration: 650, // ms ball takes to reach the goal plane
-  arcHeight: 120, // px of vertical arc at the apex
-  easing: 'Quad.easeOut', // Phaser easing name for the travel
+  flightDuration: 620, // ms ball takes to reach the goal plane
+  easing: 'Quad.easeOut', // decelerate into the goal (reads as perspective)
+  arcHeightFrac: 0.12, // apex lift above the straight path, as a fraction of screen height
+  curveGain: 0.15, // lateral bend at apex = curve * curveGain * goalWidth.
+  //  Small on purpose — penalties barely curve (owner note); effect only.
   scaleStart: 1.0, // ball scale at the foot (near)
-  scaleEnd: 0.45, // ball scale at the goal (far) — sells depth
+  scaleEnd: 0.42, // ball scale at the goal (far) — sells fake depth
+  resetDelay: 750, // ms to hold the landed ball before resetting to the spot
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,6 +217,15 @@ const SESSION = {
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HAPTICS (PRD §11) — navigator.vibrate cues. Kick buzz lands here at M3; the
+// save/goal buzz arrives with the keeper (M5).
+// ─────────────────────────────────────────────────────────────────────────────
+const HAPTICS = {
+  enabled: true,
+  kickMs: 12, // short buzz on ball contact (the kick)
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DEBUG (PRD §11) — the mandatory tuning overlay (architecture RULE 2).
 // ─────────────────────────────────────────────────────────────────────────────
 const DEBUG = {
@@ -233,6 +246,7 @@ export const CONFIG = {
   CPU_TAKER,
   RESOLUTION,
   SESSION,
+  HAPTICS,
   DEBUG,
 } as const;
 

@@ -55,7 +55,9 @@ src/
 
 ## Current status
 - **Milestone 1 — Scaffold + static scene: COMPLETE.** Responsive scene, both orientations. (Plus an orientation-resize bugfix: game/viewport.ts.)
-- **Milestone 2 — Input layer + debug overlay: COMPLETE (calibrating feel).**
-  Raw Pointer Events with setPointerCapture + {x,y,t} path sampling (input/SwipeInput.ts). deriveSwipe() computes vector, power (release velocity over the last velocityWindowMs, resolution-independent), and signed curve. Live debug overlay + on-screen aim reticle/ring/zone highlight. NO ball flight yet (that's M3).
-  AIM MODEL (game/aim.ts, CONFIG.AIM): decoupled & distance-driven — sideways swipe distance sets the column, upward swipe distance sets the height (short flick = bottom row, long flick = top row). All six zones reachable. reachX/reachLow/reachHigh are the live calibration knobs being tuned with the owner.
-- Next: ⏸ owner playtest sign-off, then **Milestone 3 — Ball flight from the swipe** (the big "is the feel good?" checkpoint).
+- **Milestone 2 — Input layer + debug overlay: COMPLETE.**
+  Raw Pointer Events with setPointerCapture + {x,y,t} path sampling (input/SwipeInput.ts). deriveSwipe() → vector, power (release velocity over velocityWindowMs, resolution-independent), signed curve. Live overlay + aim reticle/ring/zone highlight.
+  AIM MODEL (game/aim.ts, CONFIG.AIM): decoupled & distance-driven — sideways swipe distance sets the column, upward swipe distance sets the height (short flick = bottom row, long flick = top row). All six zones reachable. reachX/reachLow/reachHigh are the calibration knobs.
+- **Milestone 3 — Ball flight: COMPLETE (in owner playtest — the big "is the feel good?" ⏸ checkpoint).**
+  On release the ball launches from the spot along an arc (CONFIG.FLIGHT.arcHeightFrac) with a SUBTLE curve (penalties barely bend — owner note; maxCurve 0.25, small curveGain), shrinking scaleStart→scaleEnd for fake depth, landing at aim target + small power-based scatter (Math.random for now; M4 makes it seeded in resolvePenalty). Haptic kick buzz. Resets after FLIGHT.resetDelay. NO keeper / save-goal yet (M4). Movable ball is its own object; pitch stays static.
+- Next: ⏸ owner playtest sign-off on flight feel, then **Milestone 4 — Unified resolvePenalty() + InputProvider interface + CpuProvider keeper → Taker mode complete**.
