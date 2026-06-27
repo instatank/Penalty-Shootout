@@ -34,6 +34,13 @@ export function zoneIndices(id: ZoneId): { col: number; row: number } {
   return { col, row };
 }
 
+/** Build a zone id from column (0..2) and row (0..1) indices. */
+export function zoneFrom(col: number, row: number): ZoneId {
+  const colChar = col === 0 ? 'L' : col === 1 ? 'M' : 'R';
+  const rowChar = row === 0 ? 'T' : 'B';
+  return `${rowChar}${colChar}` as ZoneId;
+}
+
 /** Pixel rectangle of a given zone within the supplied goal mouth. */
 export function zoneRect(id: ZoneId, goal: Rect): Rect {
   const { zoneCols, zoneRows } = CONFIG.GEOMETRY;

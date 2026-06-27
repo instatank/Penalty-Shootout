@@ -31,14 +31,16 @@ src/
   config.ts             # RULE 1 — all tuning constants, grouped by system
   input/
     SwipeInput.ts       # RULE 3 — Pointer Events + capture + {x,y,t} sampling; deriveSwipe()
+    providers.ts        # RULE 4 — InputProvider interface + LocalHumanProvider + CpuProvider
   game/
     main.ts             # Phaser.Game config (Scale.RESIZE, scene list)
     viewport.ts         # robust full-screen sizing across orientation changes
     layout.ts           # responsive layout: computeLayout(w,h) -> pixel positions
-    aim.ts              # swipe → target point/zone on the goal plane (preliminary)
+    aim.ts              # swipe → target/zone; finalizeShot() builds the TakerInput (seeded landing)
+    resolve.ts          # RULE 4 — pure deterministic resolvePenalty() + seededRandom (no Phaser)
     zones.ts            # 3x2 zone grid: ids, rects, centers (take goal rect; shared by render + resolve)
     scenes/
-      GameScene.ts      # the pitch + live swipe/aim feedback
+      GameScene.ts      # the pitch + provider-driven kick loop + keeper dive + outcome
   ui/
     DebugOverlay.ts     # RULE 2 — toggleable live value readout
 ```
@@ -60,4 +62,6 @@ src/
   AIM MODEL (game/aim.ts, CONFIG.AIM): decoupled & distance-driven — sideways swipe distance sets the column, upward swipe distance sets the height (short flick = bottom row, long flick = top row). All six zones reachable. reachX/reachLow/reachHigh are the calibration knobs.
 - **Milestone 3 — Ball flight: COMPLETE (in owner playtest — the big "is the feel good?" ⏸ checkpoint).**
   On release the ball launches from the spot along an arc (CONFIG.FLIGHT.arcHeightFrac) with a SUBTLE curve (penalties barely bend — owner note; maxCurve 0.25, small curveGain), shrinking scaleStart→scaleEnd for fake depth, landing at aim target + small power-based scatter (Math.random for now; M4 makes it seeded in resolvePenalty). Haptic kick buzz. Resets after FLIGHT.resetDelay. NO keeper / save-goal yet (M4). Movable ball is its own object; pitch stays static.
-- Next: ⏸ owner playtest sign-off on flight feel, then **Milestone 4 — Unified resolvePenalty() + InputProvider interface + CpuProvider keeper → Taker mode complete**.
+- **Milestone 4 — Taker mode complete: COMPLETE (in owner playtest).**
+  Pure deterministic resolvePenalty() (game/resolve.ts, no Phaser): saveChance = base + zoneMatch·zoneBonus·timingQuality − power·powerPenalty − cornerness·cornerPenalty, seeded roll. InputProvider interface (input/providers.ts): LocalHumanProvider (live swipe → seeded TakerInput via aim.finalizeShot) + CpuProvider keeper (dive zone+timing from CONFIG.CPU_KEEPER.difficulty). GameScene runs a provider-driven kick loop that NEVER branches CPU/human (the M8 keystone): aim → CPU keeper dive → resolve → GOAL/SAVE/MISS banner → reset. Verified: corner+power is unsaveable even on a correct keeper read (PRD risk/reward); loop survives orientation changes (cancel() resolves the pending taker promise).
+- Next: ⏸ owner playtest sign-off, then **Milestone 5 — Keeper mode** (CpuProvider taker + tell + human dive input + timing, resolved through the SAME function).

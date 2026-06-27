@@ -60,6 +60,11 @@ const COLORS = {
   aimReticle: 0xff5252, // crosshair at the target point
   aimRing: 0xff8a80, // scatter ring (errorRadius)
   zoneHighlight: 0xffeb3b, // the targeted 3x2 cell
+
+  // Outcome banner colours.
+  outcomeGoal: 0x4caf50, // GOAL
+  outcomeSave: 0xff7043, // SAVE
+  outcomeMiss: 0x90a4ae, // MISS
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,11 +185,18 @@ const FLIGHT = {
 // CPU_KEEPER (PRD §5) — opponent in solo Taker mode. (Not wired until M4.)
 // ─────────────────────────────────────────────────────────────────────────────
 const CPU_KEEPER = {
-  reactionDelay: 180, // ms after strike before the keeper commits a dive
-  guessAccuracy: 0.5, // 0..1 chance of guessing the correct zone column
-  diveSpeed: 1.0, // animation speed multiplier
-  reach: 1.0, // how far the dive covers (scales zoneMatch overlap)
-  difficulty: 0.5, // single master knob (PRD §5) — blends the above
+  difficulty: 0.5, // single master knob (PRD §5). Keep beatable — err low.
+  // Zone-guess accuracy is lerp(min,max) by difficulty (chance of reading the
+  // right column). Kept modest so well-placed corners beat the keeper.
+  guessAccuracyMin: 0.25,
+  guessAccuracyMax: 0.8,
+  // Dive timing spread (× timingWindowMs) is lerp(max,min) by difficulty — a
+  // better keeper times the dive tighter.
+  timingSpreadMin: 0.35,
+  timingSpreadMax: 1.7,
+  reactionDelay: 160, // ms after the strike before the dive animation starts
+  diveDuration: 420, // ms for the dive animation
+  reach: 0.92, // how far toward the zone the keeper visibly reaches (0..1)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +237,16 @@ const SESSION = {
 const HAPTICS = {
   enabled: true,
   kickMs: 12, // short buzz on ball contact (the kick)
+  goalMs: 20, // buzz on a goal
+  saveMs: 30, // buzz on a save
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI — outcome reveal (PRD §12). Big GOAL / SAVE / MISS banner between kicks.
+// ─────────────────────────────────────────────────────────────────────────────
+const UI = {
+  outcomeHoldMs: 1100, // how long the GOAL/SAVE/MISS banner stays up
+  betweenKicksMs: 250, // small beat before the ball resets for the next kick
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -249,6 +271,7 @@ export const CONFIG = {
   RESOLUTION,
   SESSION,
   HAPTICS,
+  UI,
   DEBUG,
 } as const;
 

@@ -16,6 +16,7 @@
 import { CONFIG } from '../config';
 import { zoneAtPoint, type ZoneId, type Rect } from './zones';
 import type { SwipeSample } from '../input/SwipeInput';
+import { seededRandom, type TakerInput } from './resolve';
 
 export interface Aim {
   targetX: number;
@@ -55,4 +56,37 @@ export function computeAim(
   const targetZone = zoneAtPoint(targetX, targetY, goal);
 
   return { targetX, targetY, xFrac, heightFrac, errorRadius, targetZone };
+}
+
+/**
+ * Turn an aim + swipe into the committed TakerInput (PRD §7), applying the
+ * power-based accuracy scatter DETERMINISTICALLY from the kick `seed` (so an
+ * online opponent replays the identical landing). cornerness measures how tight
+ * to the nearest post/bar the ball lands (harder for a keeper to reach).
+ */
+export function finalizeShot(
+  aim: Aim,
+  swipe: SwipeSample,
+  goal: Rect,
+  seed: number,
+): TakerInput {
+  const ang = seededRandom(seed, 1) * Math.PI * 2;
+  const rad = Math.sqrt(seededRandom(seed, 2)) * aim.errorRadius; // uniform over the disc
+  const landingPoint = { x: aim.targetX + Math.cos(ang) * rad, y: aim.targetY + Math.sin(ang) * rad };
+  const landingZone = zoneAtPoint(landingPoint.x, landingPoint.y, goal);
+
+  // cornerness: 1 when the landing hugs an edge (post or bar), 0 dead centre.
+  const fx = clamp((landingPoint.x - goal.x) / goal.width, 0, 1);
+  const fy = clamp((landingPoint.y - goal.y) / goal.height, 0, 1);
+  const nearestEdge = Math.min(fx, 1 - fx, fy, 1 - fy); // 0 at edge .. 0.5 centre
+  const cornerness = clamp(1 - nearestEdge / 0.5, 0, 1);
+
+  return {
+    targetZone: aim.targetZone,
+    landingZone,
+    power: swipe.power,
+    curve: swipe.curve,
+    cornerness,
+    landingPoint,
+  };
 }
