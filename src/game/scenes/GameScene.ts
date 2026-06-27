@@ -19,11 +19,14 @@ import Phaser from 'phaser';
 import { CONFIG } from '../../config';
 import { ZONE_IDS, zoneRect, zoneCenter } from '../zones';
 import { computeLayout, type Layout } from '../layout';
+import { computeAim } from '../aim';
+import { SwipeInput, deriveSwipe, type SwipePhase, type SwipePoint } from '../../input/SwipeInput';
 import { DebugOverlay } from '../../ui/DebugOverlay';
 
 export class GameScene extends Phaser.Scene {
   private debug!: DebugOverlay;
   private world!: Phaser.GameObjects.Container; // all pitch visuals live here
+  private fx!: Phaser.GameObjects.Graphics; // swipe / aim feedback overlay
   private layout!: Layout;
 
   constructor() {
@@ -36,9 +39,17 @@ export class GameScene extends Phaser.Scene {
 
     this.rebuild(this.scale.width, this.scale.height);
 
-    // Mandatory tuning overlay (RULE 2). No swipe values yet in M1.
+    // Swipe-feedback layer sits above the pitch but below the debug overlay.
+    this.fx = this.add.graphics().setDepth(500);
+
+    // Mandatory tuning overlay (RULE 2).
     this.debug = new DebugOverlay(this);
-    this.updateDebugLines();
+    this.showIdleDebug();
+
+    // Input layer (PRD §4): raw Pointer Events + capture + path sampling. The
+    // instance stays alive via its own canvas listeners and self-cleans on
+    // scene shutdown, so it needs no stored reference.
+    new SwipeInput(this, { onUpdate: (phase, pts) => this.onSwipe(phase, pts) });
 
     // Redraw on resize / orientation change.
     this.scale.on('resize', this.onResize, this);
@@ -49,7 +60,72 @@ export class GameScene extends Phaser.Scene {
 
   private onResize(gameSize: Phaser.Structs.Size): void {
     this.rebuild(gameSize.width, gameSize.height);
-    this.updateDebugLines();
+    this.fx.clear(); // any in-flight swipe feedback is stale after a resize
+    this.showIdleDebug();
+  }
+
+  // ── Input → live aim preview + debug readout (no ball flight yet, M2) ──────
+  private onSwipe(phase: SwipePhase, points: SwipePoint[]): void {
+    if (points.length < 2) {
+      // Just a touch-down so far — nothing to derive.
+      if (phase === 'start') this.fx.clear();
+      return;
+    }
+
+    const sample = deriveSwipe(points, this.scale.height);
+    const aim = computeAim(sample, this.layout.goal);
+
+    // Ignore taps (tiny gestures) on release.
+    const minDist = this.scale.height * CONFIG.INPUT.minSwipeDistFrac;
+    if (phase === 'end' && sample.distance < minDist) {
+      this.fx.clear();
+      this.showIdleDebug();
+      return;
+    }
+
+    this.drawSwipeFeedback(sample.points, aim);
+    this.debug.setLines([
+      'SWIPE' + (phase === 'end' ? ' (release)' : ''),
+      'vec ' + Math.round(sample.dx) + ', ' + Math.round(sample.dy),
+      'pow ' + sample.power.toFixed(2) + '  (' + sample.speedPxPerMs.toFixed(2) + ' px/ms)',
+      'curve ' + (sample.curve >= 0 ? '+' : '') + sample.curve.toFixed(3),
+      'errR ' + Math.round(aim.errorRadius) + 'px',
+      'target ' + (aim.targetZone ?? 'MISS (wide/over)'),
+    ]);
+  }
+
+  private drawSwipeFeedback(points: SwipePoint[], aim: ReturnType<typeof computeAim>): void {
+    const g = this.fx;
+    g.clear();
+
+    // Targeted zone cell (faint fill).
+    if (aim.targetZone) {
+      const r = zoneRect(aim.targetZone, this.layout.goal);
+      g.fillStyle(CONFIG.COLORS.zoneHighlight, 0.18);
+      g.fillRect(r.x, r.y, r.width, r.height);
+    }
+
+    // Sampled finger path.
+    g.lineStyle(2, CONFIG.COLORS.swipePath, 0.9);
+    g.beginPath();
+    g.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) g.lineTo(points[i].x, points[i].y);
+    g.strokePath();
+
+    // Aim line from the ball to the target.
+    const ball = this.layout.ball;
+    g.lineStyle(2, CONFIG.COLORS.aimLine, 0.5);
+    g.lineBetween(ball.x, ball.y, aim.targetX, aim.targetY);
+
+    // Scatter ring (errorRadius) — grows with power.
+    g.lineStyle(2, CONFIG.COLORS.aimRing, 0.8);
+    g.strokeCircle(aim.targetX, aim.targetY, aim.errorRadius);
+
+    // Reticle crosshair at the target.
+    const s = Math.max(8, ball.r * 0.6);
+    g.lineStyle(3, CONFIG.COLORS.aimReticle, 1);
+    g.lineBetween(aim.targetX - s, aim.targetY, aim.targetX + s, aim.targetY);
+    g.lineBetween(aim.targetX, aim.targetY - s, aim.targetX, aim.targetY + s);
   }
 
   /** Recompute the layout for the given size and redraw every pitch visual. */
@@ -66,13 +142,13 @@ export class GameScene extends Phaser.Scene {
     this.drawBall();
   }
 
-  private updateDebugLines(): void {
+  private showIdleDebug(): void {
     const l = this.layout;
     this.debug.setLines([
       'PENALTY SHOOTOUT',
-      'Milestone 1 — static scene',
+      'Milestone 2 — input layer',
       (l.isLandscape ? 'landscape' : 'portrait') + ' ' + Math.round(l.width) + 'x' + Math.round(l.height),
-      'no input / flight yet',
+      'swipe to aim →',
       'tap DBG to hide',
     ]);
   }

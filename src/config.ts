@@ -53,6 +53,13 @@ const COLORS = {
 
   debugText: 0x00ff66,
   debugBg: 0x000000,
+
+  // Swipe-feedback visuals (the M2 aim preview).
+  swipePath: 0xffe082, // the sampled finger path
+  aimLine: 0xffffff, // ball → target aim line
+  aimReticle: 0xff5252, // crosshair at the target point
+  aimRing: 0xff8a80, // scatter ring (errorRadius)
+  zoneHighlight: 0xffeb3b, // the targeted 3x2 cell
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,12 +120,29 @@ const GEOMETRY = {
 // INPUT (PRD §4) — swipe → derived values. (Not wired until Milestone 2.)
 // ─────────────────────────────────────────────────────────────────────────────
 const INPUT = {
-  minPower: 0.15, // clamp floor for normalised power [0..1]
-  maxPower: 1.0,
-  velocityWindowMs: 80, // power = release velocity over the LAST ~80ms only
-  maxCurve: 0.35, // cap on lateral bend (low — it's a penalty)
-  baseError: 8, // px of aim scatter at zero power (small)
-  kPower: 46, // extra px of scatter per unit power (errorRadius growth)
+  // Power = release velocity over the LAST velocityWindowMs, normalised to 0..1.
+  minPower: 0.15, // clamp floor
+  maxPower: 1.0, // clamp ceiling
+  velocityWindowMs: 80, // measure speed over the last ~80ms (rewards a snappy flick)
+  fullPowerSpeed: 2.6, // swipe speed (in screen-HEIGHTS per second) that = max power.
+  //  Resolution-independent: scales with screen size.
+
+  // Curve = signed lateral deviation of the path midpoint from the straight
+  // start→end line, as a fraction of swipe length, capped here (low — penalty).
+  maxCurve: 0.35,
+
+  // Aim mapping (swipe direction → target on the goal plane). PRELIMINARY — used
+  // by the M2 reticle/overlay; ball flight that consumes it arrives in M3.
+  aimAngleRange: 50, // degrees from straight-up that maps to the goalpost edge
+  aimOvershoot: 1.2, // allow the target up to 20% past the posts/bar (so you can miss)
+
+  // Accuracy scatter: errorRadius = (baseError + kPower * power) * goalWidth.
+  // Fractions of goal width so the scatter scales with screen. Used for the M2
+  // scatter ring preview and the M4 landing point.
+  baseError: 0.015, // ~1.5% of goal width at zero power (small)
+  kPower: 0.09, // grows with power — high power widens the error (PRD §5)
+
+  minSwipeDistFrac: 0.03, // shorter than this (fraction of screen height) = a tap, ignored
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

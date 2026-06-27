@@ -29,12 +29,16 @@ vite/config.prod.mjs    # production build (Vercel-ready)
 src/
   main.ts               # boots the Phaser game
   config.ts             # RULE 1 — all tuning constants, grouped by system
+  input/
+    SwipeInput.ts       # RULE 3 — Pointer Events + capture + {x,y,t} sampling; deriveSwipe()
   game/
-    main.ts             # Phaser.Game config (Scale FIT, portrait, scene list)
+    main.ts             # Phaser.Game config (Scale.RESIZE, scene list)
+    viewport.ts         # robust full-screen sizing across orientation changes
     layout.ts           # responsive layout: computeLayout(w,h) -> pixel positions
+    aim.ts              # swipe → target point/zone on the goal plane (preliminary)
     zones.ts            # 3x2 zone grid: ids, rects, centers (take goal rect; shared by render + resolve)
     scenes/
-      GameScene.ts      # the pitch: perspective goal, ball, keeper, zone grid
+      GameScene.ts      # the pitch + live swipe/aim feedback
   ui/
     DebugOverlay.ts     # RULE 2 — toggleable live value readout
 ```
@@ -50,6 +54,7 @@ src/
 - Owner is non-technical: clear, well-commented code; explain decisions in plain language.
 
 ## Current status
-- **Milestone 1 — Scaffold + static scene: COMPLETE (in owner playtest).**
-  Responsive static scene (wide perspective goal, ball, keeper, 3×2 zone grid, dark stadium backdrop for contrast) that fills the screen in portrait & landscape. No input, no ball flight yet. Revised per owner feedback: → landscape, contrast pass, → fully responsive both-orientation layout.
-- Next: ⏸ owner playtest sign-off, then **Milestone 2 — Input layer + debug overlay**.
+- **Milestone 1 — Scaffold + static scene: COMPLETE.** Responsive scene, both orientations. (Plus an orientation-resize bugfix: game/viewport.ts.)
+- **Milestone 2 — Input layer + debug overlay: COMPLETE (in owner playtest).**
+  Raw Pointer Events with setPointerCapture + {x,y,t} path sampling (input/SwipeInput.ts). deriveSwipe() computes vector, power (release velocity over the last velocityWindowMs, resolution-independent), and signed curve. Live debug overlay prints vector/power/curve/errorRadius/target zone; on-screen aim reticle + scatter ring + target-zone highlight. NO ball flight yet (that's M3).
+- Next: ⏸ owner playtest sign-off, then **Milestone 3 — Ball flight from the swipe** (the big "is the feel good?" checkpoint).
