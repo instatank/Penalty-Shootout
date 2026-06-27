@@ -95,9 +95,11 @@ const GEOMETRY = {
     goalTopFrac: 0.17, // crossbar y / screen height
     boxFarPadFrac: 0.02, // far box half-width = goal half-width + this * width
     boxNearHalfWidthFrac: 0.47, // near box half-width / screen width (sells depth)
-    boxNearYFrac: 0.96, // near edge y / screen height
-    spotYFrac: 0.75, // penalty spot y / screen height
-    ballYFrac: 0.88, // ball rest y / screen height
+    boxNearYFrac: 0.92, // near edge y / screen height
+    spotYFrac: 0.68, // penalty spot y / screen height
+    ballYFrac: 0.8, // ball rest y / screen height — lifted from 0.88 so the ball
+    //  sits clear of the iOS home-swipe bar at the bottom in landscape (starting
+    //  a swipe there must not trigger the phone's home gesture).
     ballRadiusFrac: 0.039, // ball radius / screen height
   },
 
@@ -124,8 +126,10 @@ const INPUT = {
   minPower: 0.15, // clamp floor
   maxPower: 1.0, // clamp ceiling
   velocityWindowMs: 80, // measure speed over the last ~80ms (rewards a snappy flick)
-  fullPowerSpeed: 2.6, // swipe speed (in screen-HEIGHTS per second) that = max power.
-  //  Resolution-independent: scales with screen size.
+  fullPowerSpeed: 3.6, // swipe speed (in screen-HEIGHTS per second) that = max power.
+  //  Raised from 2.6 so power no longer pins at 1.0 — a normal flick lands
+  //  mid-range and only a genuinely fast flick reaches full power. Resolution-
+  //  independent: scales with screen size.
 
   // Curve = signed lateral deviation of the path midpoint from the straight
   // start→end line, as a fraction of swipe length, capped here (low — penalty).
@@ -149,7 +153,7 @@ const INPUT = {
 // All values are fractions of the live SCREEN size, so they scale per device.
 // ─────────────────────────────────────────────────────────────────────────────
 const AIM = {
-  reachX: 0.22, // sideways swipe (fraction of screen WIDTH) to aim at a post
+  reachX: 0.2, // sideways swipe (fraction of screen WIDTH) to aim at a post
   reachLow: 0.03, // up-swipe (fraction of screen HEIGHT) at/below which = ground (bottom)
   reachHigh: 0.34, // up-swipe (fraction of screen HEIGHT) that = the crossbar (top)
   overshoot: 1.15, // allow aiming slightly past the posts/bar so misses are possible

@@ -76,7 +76,10 @@ export class GameScene extends Phaser.Scene {
     const aim = computeAim(sample, this.layout.goal, this.scale.width, this.scale.height);
 
     // Test hook (dev only; stripped from production builds).
-    if (import.meta.env.DEV) (window as unknown as { __lastAim?: unknown }).__lastAim = aim;
+    if (import.meta.env.DEV) {
+      (window as unknown as { __lastAim?: unknown }).__lastAim = aim;
+      (window as unknown as { __lastPower?: number }).__lastPower = sample.power;
+    }
 
     // Ignore taps (tiny gestures) on release.
     const minDist = this.scale.height * CONFIG.INPUT.minSwipeDistFrac;
