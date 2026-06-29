@@ -45,6 +45,12 @@ export class GameScene extends Phaser.Scene {
   private keeperShadow!: Phaser.GameObjects.Image;
   private takerShadow!: Phaser.GameObjects.Image;
   private hitStopTimer: number | null = null; // Tier 1 item 4 — real-time freeze timer
+  // Tier 2 — particle emitters (created once, exploded at key moments) + ball trail.
+  private turfEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private sprayEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private dustEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private confettiEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private ballTrail!: Phaser.GameObjects.Particles.ParticleEmitter;
   private fx!: Phaser.GameObjects.Graphics; // swipe / aim feedback overlay
   private powerGfx!: Phaser.GameObjects.Graphics; // live power meter (Phase 1)
   private ball!: Phaser.GameObjects.Container;
@@ -113,6 +119,9 @@ export class GameScene extends Phaser.Scene {
     for (const s of [this.ballShadow, this.keeperShadow, this.takerShadow]) {
       s.setTint(0x000000).setAlpha(CONFIG.JUICE.shadow.groundAlpha);
     }
+
+    // Particles + ball trail (Tier 2) — emitters built once, fired on demand.
+    this.createParticleSystems();
 
     // Movable actors (the pitch behind them is static).
     this.ballGfx = this.add.graphics();
@@ -189,6 +198,14 @@ export class GameScene extends Phaser.Scene {
         getState: () => ({ mode: this.mode, state: this.state, diveCaptured: this.diveCaptured }),
         getTimeScale: () => ({ clock: this.time.timeScale, tweens: this.tweens.timeScale }), // hit-stop check
         getNetEnergy: () => (this.netSim.isSettled() ? 0 : 1), // 0 = net at rest
+        getParticleCounts: () => ({
+          turf: this.turfEmitter.getAliveParticleCount(),
+          spray: this.sprayEmitter.getAliveParticleCount(),
+          dust: this.dustEmitter.getAliveParticleCount(),
+          confetti: this.confettiEmitter.getAliveParticleCount(),
+          trail: this.ballTrail.getAliveParticleCount(),
+        }),
+        burstConfetti: () => this.burstConfetti(), // headless: exercise the win-confetti path
         getShootout: () => this.shootout,
         setMode: (m: GameMode) => this.setMode(m),
         setKeeperDifficulty: (d: number) => {
@@ -337,6 +354,141 @@ export class GameScene extends Phaser.Scene {
     this.tweens.timeScale = 1;
   }
 
+  // ── Tier 2, item 5: screen shake ──────────────────────────────────────────
+  private screenShake(intensity: number): void {
+    if (!CONFIG.JUICE.shake.enabled || intensity <= 0) return;
+    this.cameras.main.shake(CONFIG.JUICE.shake.durationMs, intensity);
+  }
+
+  /** Strike shake scaled by shot power (a soft shot barely shakes). */
+  private strikeShake(power: number): void {
+    const S = CONFIG.JUICE.shake;
+    this.screenShake(Phaser.Math.Linear(S.strikeMin, S.strikeMax, Phaser.Math.Clamp(power, 0, 1)));
+  }
+
+  // ── Tier 2, items 6 & 7: particle systems + ball trail ────────────────────
+  private ensureParticleTextures(): void {
+    if (!this.textures.exists('pSoft')) {
+      const g = this.make.graphics({ x: 0, y: 0 });
+      g.fillStyle(0xffffff, 0.35).fillCircle(8, 8, 8); // soft halo
+      g.fillStyle(0xffffff, 0.7).fillCircle(8, 8, 5);
+      g.fillStyle(0xffffff, 1).fillCircle(8, 8, 3); // bright core
+      g.generateTexture('pSoft', 16, 16);
+      g.destroy();
+    }
+    if (!this.textures.exists('pRect')) {
+      const g = this.make.graphics({ x: 0, y: 0 });
+      g.fillStyle(0xffffff, 1).fillRect(0, 0, 6, 6);
+      g.generateTexture('pRect', 6, 6);
+      g.destroy();
+    }
+  }
+
+  private createParticleSystems(): void {
+    this.ensureParticleTextures();
+    const P = CONFIG.JUICE.particles;
+
+    // Grass flecks at the strike point (kick up + fall).
+    this.turfEmitter = this.add
+      .particles(0, 0, 'pSoft', {
+        emitting: false,
+        speed: { min: 70, max: 240 },
+        angle: { min: 210, max: 330 }, // upward fan (270 = straight up)
+        gravityY: 760,
+        lifespan: 520,
+        scale: { start: 0.5, end: 0 },
+        alpha: { start: 0.95, end: 0 },
+        tint: [...P.turfColors],
+      })
+      .setDepth(395);
+
+    // Spray off the net on a goal (a quick outward sparkle).
+    this.sprayEmitter = this.add
+      .particles(0, 0, 'pSoft', {
+        emitting: false,
+        speed: { min: 60, max: 280 },
+        angle: { min: 0, max: 360 },
+        gravityY: 240,
+        lifespan: 460,
+        scale: { start: 0.45, end: 0 },
+        alpha: { start: 0.9, end: 0 },
+        tint: P.sprayColor,
+        blendMode: 'ADD',
+      })
+      .setDepth(12); // above the net (10), below the actors
+
+    // Dust puff where a keeper lands a dive.
+    this.dustEmitter = this.add
+      .particles(0, 0, 'pSoft', {
+        emitting: false,
+        speed: { min: 40, max: 130 },
+        angle: { min: 200, max: 340 },
+        gravityY: 240,
+        lifespan: 540,
+        scale: { start: 0.6, end: 0 },
+        alpha: { start: 0.5, end: 0 },
+        tint: P.dustColor,
+      })
+      .setDepth(7);
+
+    // Confetti on a match win — pinned to the screen so it rains over the UI.
+    this.confettiEmitter = this.add
+      .particles(0, 0, 'pRect', {
+        emitting: false,
+        speed: { min: 200, max: 470 },
+        angle: { min: 55, max: 125 }, // downward fan
+        gravityY: 380,
+        lifespan: 1900,
+        scale: { start: 0.95, end: 0.7 },
+        alpha: { start: 1, end: 0 },
+        rotate: { min: 0, max: 360 },
+        tint: [...P.confettiColors],
+      })
+      .setDepth(1104)
+      .setScrollFactor(0);
+
+    // Ball trail (item 7) — a follow-emitter that leaves a fading streak in flight.
+    this.ballTrail = this.add
+      .particles(0, 0, 'pSoft', {
+        emitting: false,
+        speed: 0, // afterimages fade in place
+        lifespan: CONFIG.JUICE.trail.lifespan,
+        scale: { start: CONFIG.JUICE.trail.scaleStart, end: 0 },
+        alpha: { start: 0.55, end: 0 },
+        tint: CONFIG.JUICE.trail.color,
+        blendMode: 'ADD',
+      })
+      .setDepth(399); // just behind the ball (400)
+  }
+
+  private burstTurf(x: number, y: number): void {
+    if (CONFIG.JUICE.particles.enabled) this.turfEmitter.explode(CONFIG.JUICE.particles.turfCount, x, y);
+  }
+  private burstNetSpray(x: number, y: number): void {
+    if (CONFIG.JUICE.particles.enabled) this.sprayEmitter.explode(CONFIG.JUICE.particles.netSprayCount, x, y);
+  }
+  private burstDust(x: number, y: number): void {
+    if (CONFIG.JUICE.particles.enabled) this.dustEmitter.explode(CONFIG.JUICE.particles.dustCount, x, y);
+  }
+  private burstConfetti(): void {
+    if (!CONFIG.JUICE.particles.enabled) return;
+    this.confettiEmitter.explode(CONFIG.JUICE.particles.confettiCount, this.scale.width / 2, -10);
+  }
+
+  /** Begin the ball trail; density scales with shot power (harder = denser). */
+  private startBallTrail(power: number): void {
+    if (!CONFIG.JUICE.trail.enabled) return;
+    const T = CONFIG.JUICE.trail;
+    const freq = Phaser.Math.Linear(T.frequencyMin, T.frequencyMax, Phaser.Math.Clamp(power, 0, 1));
+    this.ballTrail.setFrequency(freq);
+    this.ballTrail.startFollow(this.ball);
+    this.ballTrail.start();
+  }
+  private stopBallTrail(): void {
+    this.ballTrail?.stop();
+    this.ballTrail?.stopFollow();
+  }
+
   // ── Session controller ────────────────────────────────────────────────────
   // Taker mode runs a full SHOOTOUT (Phase 3); Keeper mode stays a free practice
   // loop (Phase 4 will route it through the same shootout machine). Bumping
@@ -443,18 +595,23 @@ export class GameScene extends Phaser.Scene {
     this.debug.setLines(['OPPONENT KICK', 'target ' + targetZone, scored ? '→ scores' : '→ saved']);
 
     const end = scored ? target : { x: hp.x, y: hp.y };
+    const oppPower = 0.75; // the simulated opponent strikes firmly (drives shake/trail)
     this.cameraBeat('strike', end); // same strike framing as a player kick (Tier 1)
     this.hitStop(CONFIG.JUICE.hitStop.strikeMs);
-    await this.flyBall(start, end, 0, dur);
+    this.strikeShake(oppPower);
+    this.burstTurf(start.x, start.y);
+    await this.flyBall(start, end, 0, dur, undefined, undefined, { power: oppPower });
 
     const C = CONFIG.COLORS;
     if (scored) {
-      // GOAL against us — ripple the net at the entry point + celebration framing.
+      // GOAL against us — ripple + spray the net + celebration framing.
       const goalRect = this.layout.goal;
-      this.punchNet((target.x - goalRect.x) / goalRect.width, (target.y - goalRect.y) / goalRect.height, 0.8);
+      this.punchNet((target.x - goalRect.x) / goalRect.width, (target.y - goalRect.y) / goalRect.height, oppPower);
+      this.burstNetSpray(end.x, end.y);
       this.cameraBeat('goal', end);
     } else {
       this.hitStop(CONFIG.JUICE.hitStop.saveMs);
+      this.screenShake(CONFIG.JUICE.shake.saveAmt);
       await this.deflectBall(hp.x, hp.y);
       this.cameraBeat('save', { x: hp.x, y: hp.y });
     }
@@ -565,8 +722,12 @@ export class GameScene extends Phaser.Scene {
     this.endTitle.setText(win ? 'YOU WIN!' : 'YOU LOSE').setColor(win ? '#4caf50' : '#ff7043');
     this.endScore.setText('FINAL   YOU  ' + s.player.scored + '  –  ' + s.opponent.scored + '  CPU');
     this.setEndScreenVisible(true);
-    if (win) this.sfx.cheer();
-    else this.sfx.groan();
+    if (win) {
+      this.sfx.cheer();
+      this.burstConfetti(); // Tier 2 — confetti rains over the win screen
+    } else {
+      this.sfx.groan();
+    }
   }
 
   private hideEndScreen(): void {
@@ -602,6 +763,7 @@ export class GameScene extends Phaser.Scene {
     this.outcomeText.setVisible(false);
     this.netSim.reset(); // settle any leftover ripple
     if (this.mode === 'taker') this.drawNet();
+    this.stopBallTrail(); // never leave the trail emitting between kicks
     this.resetCamera(CONFIG.JUICE.camera.returnMs); // ease back to the neutral view
     this.resetBall();
     this.resetKeeper();
@@ -781,18 +943,23 @@ export class GameScene extends Phaser.Scene {
       'timing ' + result.timingQuality.toFixed(2) + '   reach ' + result.reachMargin.toFixed(2),
     ]);
 
-    // Strike: snap the camera toward the goal + a micro hit-stop for weight (Tier 1).
+    // Strike: camera snap + micro hit-stop (Tier 1) + power-scaled shake + turf
+    // flecks kicked up at the foot (Tier 2).
     this.cameraBeat('strike', end);
     this.hitStop(CONFIG.JUICE.hitStop.strikeMs);
+    this.strikeShake(taker.power);
+    this.burstTurf(start.x, start.y);
 
-    await this.flyBall(start, end, bendPx, dur);
+    await this.flyBall(start, end, bendPx, dur, undefined, undefined, { power: taker.power });
 
     if (result.saved) {
       this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" as the ball meets the gloves
+      this.screenShake(CONFIG.JUICE.shake.saveAmt);
       await this.deflectBall(handX, handY);
     } else if (result.scored) {
-      // GOAL — punch the net at the ball's entry point (Tier 1, item 1).
+      // GOAL — punch the net + spray off it at the entry point (Tier 1 + 2).
       this.punchNet(taker.landingNorm.x, taker.landingNorm.y, taker.power);
+      this.burstNetSpray(end.x, end.y);
     }
   }
 
@@ -805,6 +972,7 @@ export class GameScene extends Phaser.Scene {
     const handX = goal.x + result.keeperNorm.x * goal.width;
     const handY = goal.y + result.keeperNorm.y * goal.height;
     this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" on the save (Tier 1, item 4)
+    this.screenShake(CONFIG.JUICE.shake.saveAmt); // Tier 2, item 5
     await this.deflectBall(handX, handY);
   }
 
@@ -848,11 +1016,12 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(CONFIG.KEEPER.readyMs + C.tellLeadTime, () => {
       this.kickTakerFigure(tellSide);
       if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
-      // Camera snap toward the incoming ball. NOTE: no hit-stop here on purpose —
-      // the keeper's dive timing is measured against the wall clock, and freezing
-      // time.timeScale at the strike would desync that read-and-react window.
+      // Camera snap toward the incoming ball + turf flecks at the far spot. NOTE: no
+      // hit-stop AND no screen shake here on purpose — the keeper's dive timing is
+      // wall-clock, so a freeze would desync it and a shake would spoil the read.
       this.cameraBeat('strike', end);
-      void this.flyBall(start, end, bendPx, C.flightTime, CONFIG.KEEPER.flightScaleStart, CONFIG.KEEPER.flightScaleEnd);
+      this.burstTurf(start.x, start.y);
+      void this.flyBall(start, end, bendPx, C.flightTime, CONFIG.KEEPER.flightScaleStart, CONFIG.KEEPER.flightScaleEnd, { power: taker.power });
     });
 
     // Window close: hand the dive (or a "no dive") back to the loop. The small
@@ -875,18 +1044,24 @@ export class GameScene extends Phaser.Scene {
   /** Fly the ball start→end over durationMs with the arc, curve, depth-scale and
    *  spin used everywhere. scaleStart/End default to the taker view (shrink into
    *  the distance); the keeper view passes a growing scale (rushes the camera). */
-  private flyBall(
+  private async flyBall(
     start: { x: number; y: number },
     end: { x: number; y: number },
     bendPx: number,
     durationMs: number,
     scaleStart: number = CONFIG.FLIGHT.scaleStart,
     scaleEnd: number = CONFIG.FLIGHT.scaleEnd,
+    opts?: { power?: number },
   ): Promise<void> {
     const F = CONFIG.FLIGHT;
+    const T = CONFIG.JUICE.trail;
+    const power = Phaser.Math.Clamp(opts?.power ?? 0.6, 0, 1);
+    // Power-scaled spin (Tier 2, item 7): harder shots visibly spin faster.
+    const spinTurns = F.spinTurns * Phaser.Math.Linear(T.spinMin, T.spinMax, power);
     const arcPx = this.scale.height * F.arcHeightFrac;
     const prog = { t: 0 };
-    return this.tweenP({
+    this.startBallTrail(power); // motion trail follows the ball through the flight
+    await this.tweenP({
       targets: prog,
       t: 1,
       duration: durationMs,
@@ -900,13 +1075,14 @@ export class GameScene extends Phaser.Scene {
         const s = scaleStart + (scaleEnd - scaleStart) * t;
         this.ball.setPosition(x, y);
         this.ball.setScale(s);
-        this.ball.setRotation(t * Math.PI * 2 * F.spinTurns);
+        this.ball.setRotation(t * Math.PI * 2 * spinTurns);
         // Grounded shadow tracks the ball's GROUND point and shrinks/fades with lift
         // (Tier 1, item 2): the higher the ball, the smaller + fainter + more offset.
         const liftFrac = arcPx > 0 ? lift / arcPx : 0;
         this.positionBallShadow(x, groundY + this.layout.ball.r * 0.9 * s, s, liftFrac);
       },
     });
+    this.stopBallTrail();
   }
 
   /** Dive the keeper so its gloves reach (handX, handY), leaning into the dive. */
@@ -914,7 +1090,16 @@ export class GameScene extends Phaser.Scene {
     const goal = this.layout.goal;
     const feetY = handY + this.layout.keeper.h * 0.5; // place the body so the gloves cover handY
     const lean = Phaser.Math.Clamp((handX - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.7;
-    this.tweens.add({ targets: this.keeper, x: handX, y: feetY, rotation: lean, duration: durationMs, ease: 'Quad.easeOut' });
+    const groundY = this.layout.keeper.feetY;
+    this.tweens.add({
+      targets: this.keeper,
+      x: handX,
+      y: feetY,
+      rotation: lean,
+      duration: durationMs,
+      ease: 'Quad.easeOut',
+      onComplete: () => this.burstDust(handX, groundY), // dust puff on landing (Tier 2)
+    });
     // The grounded shadow slides along the ground with the dive (Tier 1, item 2).
     if (CONFIG.JUICE.shadow.enabled) {
       this.tweens.add({ targets: this.keeperShadow, x: handX, duration: durationMs, ease: 'Quad.easeOut' });

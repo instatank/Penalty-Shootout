@@ -152,7 +152,14 @@ Stop at every ⏸ checkpoint for the owner to playtest before continuing.**
 
 ---
 
-## TIER 2 — Core feel (items 5–7). ⏸ STOP after this tier.
+## TIER 2 — Core feel (items 5–7). ✅ BUILT — ⏸ awaiting owner playtest.
+> Status (2026-06-29): all three items implemented, build clean, headless smoke
+> green (turf/spray/dust/trail/confetti emitters all fire at configured counts;
+> timeScale restored; taker + keeper paths clean; no errors). New code in GameScene:
+> `screenShake`/`strikeShake`, `createParticleSystems` + `burstTurf/NetSpray/Dust/
+> Confetti`, `startBallTrail`/`stopBallTrail`, and `flyBall` now takes `{power}` for
+> power-scaled spin + trail density. Knobs: `CONFIG.JUICE.shake/particles/trail`.
+> Deliberately NO strike shake in keeper mode (would spoil the wall-clock read).
 
 ### Step 2.1 — Screen shake
 - `cameras.main.shake(duration, intensity)`. **Intensity scales with shot power**

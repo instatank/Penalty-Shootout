@@ -445,6 +445,46 @@ const JUICE = {
     strikeMs: 65, // freeze at ball-strike
     saveMs: 90, // freeze when the ball meets the keeper (a save)
   },
+
+  // ── 5. Screen shake (Tier 2) ─────────────────────────────────────────────
+  // cameras.main.shake — intensity is a fraction of the viewport. STRIKE shake
+  // scales with shot power; SAVE shake is fixed. Default subtle (overdone = nausea).
+  shake: {
+    enabled: true,
+    strikeMin: 0.002, // intensity at minimum power (a soft shot barely shakes)
+    strikeMax: 0.009, // intensity at full power (a noticeable but tasteful kick)
+    saveAmt: 0.006, // intensity on a save
+    durationMs: 180,
+  },
+
+  // ── 6. Particles (Tier 2) ────────────────────────────────────────────────
+  // Modest bursts at the key moments. Counts kept low for mobile 60fps. Textures
+  // are generated procedurally at boot (no asset files).
+  particles: {
+    enabled: true,
+    turfCount: 14, // grass flecks kicked up at the strike point
+    netSprayCount: 18, // spray off the net on a goal
+    dustCount: 10, // dust puff where a keeper lands a dive
+    confettiCount: 90, // confetti on a match win (one-shot)
+    turfColors: [0x2f7d33, 0x276b2c, 0x3a8f3f], // grass greens
+    dustColor: 0xddcca8, // pale turf dust
+    sprayColor: 0xffffff, // white net spray
+    confettiColors: [0xe5202e, 0x2657d6, 0x16a34a, 0xf2c14e, 0xffffff], // host-nation palette + white
+  },
+
+  // ── 7. Ball trail + spin (Tier 2) ────────────────────────────────────────
+  // A follow-emitter motion trail behind the ball in flight, plus power-scaled
+  // spin. Harder shots = denser/longer trail and faster spin.
+  trail: {
+    enabled: true,
+    lifespan: 180, // afterimage lifespan (ms) — how long the streak lingers
+    frequencyMin: 26, // ms between emits at low power (sparser trail)
+    frequencyMax: 9, // ...at high power (denser trail)
+    scaleStart: 0.6, // trail-dot start scale (the 'pSoft' texture is 16px)
+    spinMin: 0.7, // ball spinTurns multiplier at low power
+    spinMax: 1.9, // ...at high power (faster visible spin)
+    color: 0xfff2cc, // warm white/gold streak
+  },
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

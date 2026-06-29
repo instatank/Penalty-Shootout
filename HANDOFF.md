@@ -114,8 +114,13 @@ loop** — reads results only. All knobs in **`CONFIG.JUICE`**.
   micro-freeze at strike+save, real-time restore, abort-guarded; NO hit-stop on the
   keeper-mode strike — would desync the wall-clock dive timing). Build clean + headless
   smoke green. New dev hooks: `__penalty.getTimeScale()`, `getNetEnergy()`.
-- **Tier 2 next** (on owner OK): screen shake, particles, ball trail + spin.
-- **Tier 3:** slow-mo replay, WebGL post-FX grade, UI transition juice.
+- **Tier 2 — DONE, awaiting owner playtest ⏸:** power-scaled screen shake (strike +
+  save; none on the keeper-mode strike), procedural particles (turf at strike, net
+  spray on goal, dust on a keeper dive, confetti on a match win), and a power-scaled
+  ball trail + spin (`flyBall` takes `{power}`). Knobs: `CONFIG.JUICE.shake/particles/
+  trail`. Build clean + headless smoke green. Dev hooks: `getParticleCounts()`,
+  `burstConfetti()`.
+- **Tier 3 next:** slow-mo replay, WebGL post-FX grade, UI transition juice.
 - Headless tip: `playwright-core` isn't a project dep — install `--no-save` for tests.
 
 ## What's next — Phase 4 (expected: Keeper-mode shootout)

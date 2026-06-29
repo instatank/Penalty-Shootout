@@ -39,10 +39,22 @@ results, never feeds them (online-replay determinism stays intact). All knobs li
   freeze would desync the read-and-react window. Verified: `npm run build` clean +
   headless (net ripples→settles, freeze fires + always restores, taker↔keeper switches
   clean, no errors). Dev hooks added: `__penalty.getTimeScale()`, `__penalty.getNetEnergy()`.
-- **Tier 2 (next, on owner OK):** screen shake (power-scaled), particles
-  (turf/net-spray/dust/confetti), ball trail + power-scaled spin.
-- **Tier 3:** slow-mo replay, WebGL post-FX grade (vignette + floodlight bloom), UI
-  transition juice (count-up score, button press states, no hard cuts).
+- **Tier 2 — DONE (awaiting owner playtest ⏸).** (5) **Screen shake** —
+  `cameras.main.shake`, STRIKE intensity scales with shot power, fixed SAVE shake;
+  subtle defaults (`CONFIG.JUICE.shake`). (6) **Particles** — procedural soft-dot +
+  rect textures (no asset files) feeding four emitters: turf flecks at the strike
+  point, white net spray on a goal, a dust puff where a keeper lands a dive, and a
+  one-shot confetti burst (screen-pinned) on a match win (`CONFIG.JUICE.particles`,
+  counts kept low for mobile). (7) **Ball trail + spin** — a follow-emitter motion
+  streak whose density scales with power, plus `flyBall` spin rate scaled by power
+  (`CONFIG.JUICE.trail`). `flyBall` now takes an `{power}` opt driving spin + trail.
+  **NO strike shake in keeper mode on purpose** (same reason as the hit-stop skip —
+  it would spoil the wall-clock read). Verified: build clean + headless (all five
+  emitters fire at configured counts, timeScale restored, taker+keeper clean, no
+  errors). Dev hooks: `__penalty.getParticleCounts()`, `burstConfetti()`.
+- **Tier 3 (next, on owner OK):** slow-mo replay, WebGL post-FX grade (vignette +
+  floodlight bloom), UI transition juice (count-up score, button press states, no
+  hard cuts).
 
 ## Stack (decided — do not substitute without asking the owner)
 - **Phaser 3.x** (pinned to 3.90.0). **NOT Phaser 4.**
