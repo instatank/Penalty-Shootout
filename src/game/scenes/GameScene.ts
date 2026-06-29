@@ -158,8 +158,9 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
 
     // "REPLAY" badge (Tier 3) — top-centre during a slow-mo replay, screen-pinned.
+    // Blinks while a replay runs so it's unmistakable (see playReplay).
     this.replayLabel = this.add
-      .text(0, 0, '▶ REPLAY', { fontFamily: 'monospace', fontStyle: 'bold', fontSize: '20px', color: '#ffffff', backgroundColor: '#00000066', padding: { x: 10, y: 6 } })
+      .text(0, 0, '● REPLAY', { fontFamily: 'monospace', fontStyle: 'bold', fontSize: '26px', color: '#ff5252', backgroundColor: '#000000aa', padding: { x: 14, y: 8 } })
       .setOrigin(0.5, 0)
       .setDepth(905)
       .setScrollFactor(0)
@@ -543,8 +544,9 @@ export class GameScene extends Phaser.Scene {
     };
     this.input.once('pointerdown', skip);
 
-    this.replayLabel.setPosition(this.scale.width / 2, 14).setVisible(true).setAlpha(0);
-    this.tweens.add({ targets: this.replayLabel, alpha: 1, duration: 200, ease: 'Quad.easeOut' });
+    // Blinking "REPLAY" badge so it's unmistakable we're in replay (not live) mode.
+    this.replayLabel.setPosition(this.scale.width / 2, this.scale.height * 0.12).setVisible(true).setAlpha(1);
+    this.tweens.add({ targets: this.replayLabel, alpha: { from: 1, to: 0.2 }, duration: 420, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     this.cameraReplay(focus);
 
     // Slowed durations (re-simulation, NOT timeScale — keeps hit-stop isolated).
@@ -573,6 +575,7 @@ export class GameScene extends Phaser.Scene {
 
     // Cleanup (runs on normal finish AND on skip/abort).
     this.input.off('pointerdown', skip);
+    this.tweens.killTweensOf(this.replayLabel); // stop the blink
     this.replayLabel.setVisible(false);
     this.resetCamera(0);
   }
@@ -736,6 +739,10 @@ export class GameScene extends Phaser.Scene {
     while (this.alive && session === this.session && this.shootout.phase !== 'done') {
       try {
         const side: Side | null = this.shootout.next;
+        // A clear "YOUR TURN / CPU TURN" break before each kick so turns don't blur
+        // together (owner: the player→CPU hand-off was happening too fast).
+        if (side) await this.announceTurn(side);
+        if (session !== this.session) return;
         let scored: boolean;
         if (side === 'opponent') {
           scored = await this.playOpponentShot();
@@ -759,6 +766,28 @@ export class GameScene extends Phaser.Scene {
     if (this.alive && session === this.session && this.shootout.phase === 'done') {
       this.showEndScreen(this.shootout.winner ?? 'opponent');
     }
+  }
+
+  /** A short, clear "YOUR TURN / CPU TURN" break between kicks so the alternating
+   *  turns don't blur together. Reuses the centred banner; fully completes (and
+   *  hides) before the kick starts, and is abortable on a mode-switch/resize. */
+  private async announceTurn(side: Side): Promise<void> {
+    const player = side === 'player';
+    const label = player ? 'YOUR TURN' : 'CPU TURN';
+    const color = player ? '#ffffff' : '#ffa726'; // you = white, CPU = amber
+    const t = this.outcomeText;
+    this.tweens.killTweensOf(t);
+    t.setText(label)
+      .setColor(color)
+      .setFontSize(Math.round(Math.min(this.scale.width, this.scale.height) * 0.11) + 'px')
+      .setPosition(this.scale.width / 2, this.scale.height * 0.42)
+      .setVisible(true)
+      .setAlpha(0)
+      .setScale(0.8);
+    this.tweens.add({ targets: t, alpha: 1, scale: 1, duration: 240, ease: 'Back.easeOut' });
+    await this.delayP(CONFIG.UI.turnBannerMs);
+    this.tweens.killTweensOf(t);
+    t.setVisible(false).setScale(1).setAlpha(1); // reset for the next outcome banner
   }
 
   /** A simulated opponent penalty (Phase 3): outcome by tuned probability, with a

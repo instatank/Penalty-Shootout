@@ -368,6 +368,7 @@ const UI = {
   },
   outcomeHoldMs: 1200, // how long the GOAL/SAVE/MISS banner stays up
   betweenKicksMs: 250, // small beat before the ball resets for the next kick
+  turnBannerMs: 1400, // how long the "YOUR TURN / CPU TURN" break shows between kicks
   goalZoomPeak: 1.3, // banner overshoot scale on a GOAL (celebratory pop)
   // (Net feedback moved from a whole-net shake to a localized NetSim ripple punched
   //  at the ball's entry point — see CONFIG.JUICE.net.)
@@ -496,11 +497,11 @@ const JUICE = {
   // After a corner goal / a save, re-simulate the resolved shot at a slowed flight
   // speed from a tight, dramatic camera. Tap anywhere to skip. Presentation-only —
   // it re-runs the SAME deterministic flight, never re-resolves.
-  // Disabled by default: re-running the kick by itself read as the game "auto-
-  // playing" and made pacing inconsistent. Left here, fully wired, to re-enable
-  // once the rest of the feel is dialled in.
+  // Re-enabled with a BLINKING "REPLAY" badge so it's unmistakable when a replay is
+  // running (vs the live game). The badge blink + clear turn breaks address the
+  // earlier "feels like it's auto-playing" confusion.
   replay: {
-    enabled: false,
+    enabled: true,
     slowFactor: 2.6, // flight-duration multiplier (higher = slower replay)
     zoom: 1.18, // gentle push-in for the replay camera (zoom-only, no pan)
     inMs: 520, // ease-in time for the replay framing + label
