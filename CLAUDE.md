@@ -15,6 +15,35 @@ The owner is re-reviewing the build against a fresh **phase-wise** plan (inspire
 - **Phase 2 (resolution core & keeper logic): DONE (awaiting owner playtest ⏸).** Reworked `resolvePenalty` to Phase 2's exact **hands-at-arrival reach model** (replaces the old reach-shrink/timingFloor model): the keeper's hands travel from goal CENTRE toward the dive target; `diveProgress = 1 − max(0,diveTiming)/RESOLUTION.diveLateWindowMs` (early/on-time = fully there, late = hands stay near centre); save if the ball lands within the reach ellipse (RESOLUTION.reachX/reachY, shrunk a touch by power) of the hands' arrival point. Tuned reach SMALLER so a correct dive saves most of a side but the **extreme corner is unsaveable**; a resting/late keeper keeps a small **central** reach (centre saveable, but punished against a committed diving keeper). Still pure + deterministic (keystone). AI keeper: difficulty is a single 0..1 DIRECTIONAL knob (commits ON TIME via timingJitterMs; beaten by wrong reads + corners) — column read = guessAccuracyMin/Max, height read = rowAccuracyMin/Max, both lerp by difficulty (presets EASY 0.25 / MED 0.5 / HARD 0.85). Verified headless: correct dive saves the zone but corner = goal; centre punished vs diver, saved vs rester; late dive can't reach; EASY 2/12 vs HARD 12/12 saves on a readable shot (corners still beat HARD). Keeper's-eye mode now has timing that bites (read-not-react). Dev hook: `__penalty.setKeeperDifficulty(0..1)`. Tuning knobs: RESOLUTION.reachX/reachY/diveLateWindowMs/powerReachPenalty, CPU_KEEPER.difficulty/guessAccuracy*/rowAccuracy*.
 - **Phase 1 (taker shot mechanic): DONE (awaiting owner playtest ⏸).** Most of it already existed (M2–M4: drag-aim + live aim indicator + power-scatter + arced depth flight + reset). Phase 1 added/sharpened: (1) **power → ball speed** — taker flight time lerps CONFIG.FLIGHT.flightDurationSlow→Fast by power; (2) a **live power meter** (CONFIG.UI.powerMeter) that fills green and shows a red overshoot past the accuracy threshold; (3) a **threshold-based power/accuracy tradeoff** — `aim.scatterRadius()` stays at baseError until CONFIG.INPUT.powerAccuracyThreshold, then grows by kPower·excess^scatterExponent (overrides PRD §5's linear scatter); (4) `aim.shotOutcome()` → on-target/wide/over, shown in the debug overlay. **Power model reconciliation:** Phase 1's "distance/speed = power" is kept as **release speed (velocity)** — it matches the acceptance ("fast drags") and is the only model that frees both aim axes from one 2D drag. To switch to pull-distance charging instead, that's a separate change (aim height would need a new source). Tuning knobs: INPUT.kPower/powerAccuracyThreshold/scatterExponent, FLIGHT.flightDurationSlow/Fast.
 
+## Juice & game-feel track (owner design brief, 2026-06-29 — parallel to phases)
+A separate **presentation-only** polish pass the owner requested, built in three tiers.
+Full brief: `docs/juice-brief.md`; build plan + live status: `docs/juice-plan.md`.
+**Nothing here touches `resolvePenalty` or the provider-agnostic kick loop** — it reads
+results, never feeds them (online-replay determinism stays intact). All knobs live in
+**`CONFIG.JUICE`** (RULE 1). Build tier by tier; stop at each ⏸ for owner playtest.
+- **Tier 1 — DONE (awaiting owner playtest ⏸).** (1) **Dynamic net** — new pure
+  `game/net/NetSim.ts` damped-wave spring grid; a scored ball `punchNet`es the entry
+  point and the bulge propagates/overshoots/settles, rendered by redrawing the existing
+  hatch lines through the displaced nodes (only steps while it has energy → free at rest;
+  at rest it's pixel-identical to the old net). Replaces the old whole-net `shakeNet`.
+  (2) **Grounded shadows** — one soft blurred-ellipse texture under ball + keeper + taker;
+  the ball's shadow shrinks + fades with arc height (driven from `flyBall` onUpdate), the
+  keeper's slides with a dive. Replaces the static baked `drawBallShadow`. (3) **Dynamic
+  camera** — `cameraBeat(aim|strike|goal|save)` + `resetCamera`: eased push-ins/framing
+  that react per outcome, snap to neutral on resize/mode-switch (UI pinned
+  `scrollFactor(0)` so it never drifts; swipe aim is screen-space so zoom doesn't affect
+  it). (4) **Hit-stop** — `timeScale→0` micro-freeze at strike + save, restored on a
+  REAL-time `setTimeout` (the game clock is frozen during the freeze), with
+  `abortAll`/SHUTDOWN guards so a resize mid-freeze can't deadlock. **NOTE: deliberately
+  NO hit-stop on the keeper-mode strike** — the human dive timing is wall-clock and a
+  freeze would desync the read-and-react window. Verified: `npm run build` clean +
+  headless (net ripples→settles, freeze fires + always restores, taker↔keeper switches
+  clean, no errors). Dev hooks added: `__penalty.getTimeScale()`, `__penalty.getNetEnergy()`.
+- **Tier 2 (next, on owner OK):** screen shake (power-scaled), particles
+  (turf/net-spray/dust/confetti), ball trail + power-scaled spin.
+- **Tier 3:** slow-mo replay, WebGL post-FX grade (vignette + floodlight bloom), UI
+  transition juice (count-up score, button press states, no hard cuts).
+
 ## Stack (decided — do not substitute without asking the owner)
 - **Phaser 3.x** (pinned to 3.90.0). **NOT Phaser 4.**
 - **TypeScript + Vite.** Build is type-checked (`tsc --noEmit`) then bundled by Vite.
@@ -47,6 +76,7 @@ src/
     aim.ts              # swipe → target/zone; scatterRadius/landShot/finalizeShot/cpuShot/computeDive/shotOutcome
     resolve.ts          # RULE 4 — pure deterministic resolvePenalty() + seededRandom (no Phaser)
     shootout.ts         # Phase 3 — pure best-of-5 shootout state machine (clinch/sudden-death); no Phaser
+    net/NetSim.ts       # Juice Tier 1 — pure damped-wave net spring grid (punch/step/point); no Phaser
     zones.ts            # 3x2 zone grid: ids, rects, centers (take goal rect; shared by render + resolve)
     scenes/
       GameScene.ts      # the pitch + session controller (runShootout/runPractice) + kick loop + scoreboard/end screen

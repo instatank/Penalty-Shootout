@@ -103,6 +103,21 @@ a real Phase-3 bug; keep the fix.
 - Stop at the ⏸ checkpoint; the owner playtests on their phone (Vercel auto-deploys
   on push to the working branch).
 
+## Juice & game-feel track (parallel to phases — owner brief 2026-06-29)
+A presentation-only polish pass (`docs/juice-brief.md` = brief, `docs/juice-plan.md` =
+plan + status), built in three tiers. **Touches nothing in `resolvePenalty` / the kick
+loop** — reads results only. All knobs in **`CONFIG.JUICE`**.
+- **Tier 1 — DONE, awaiting owner playtest ⏸:** dynamic net (`game/net/NetSim.ts`
+  spring grid, punched on a goal — replaces `shakeNet`), grounded shadows (live soft
+  ellipse under ball/keeper/taker — replaces static `drawBallShadow`), dynamic camera
+  (`cameraBeat`/`resetCamera`, UI pinned so it can't drift), and hit-stop (`timeScale→0`
+  micro-freeze at strike+save, real-time restore, abort-guarded; NO hit-stop on the
+  keeper-mode strike — would desync the wall-clock dive timing). Build clean + headless
+  smoke green. New dev hooks: `__penalty.getTimeScale()`, `getNetEnergy()`.
+- **Tier 2 next** (on owner OK): screen shake, particles, ball trail + spin.
+- **Tier 3:** slow-mo replay, WebGL post-FX grade, UI transition juice.
+- Headless tip: `playwright-core` isn't a project dep — install `--no-save` for tests.
+
 ## What's next — Phase 4 (expected: Keeper-mode shootout)
 Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a
 **scored session reusing `game/shootout.ts`** (Keeper counts SAVES; player keeps goal

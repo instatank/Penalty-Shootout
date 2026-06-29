@@ -19,6 +19,7 @@ import Phaser from 'phaser';
 import { CONFIG } from '../../config';
 import { ZONE_IDS, zoneRect, zoneCenter, zoneIndices, zoneFrom, type ZoneId } from '../zones';
 import { computeLayout, type Layout } from '../layout';
+import { NetSim } from '../net/NetSim';
 import { computeAim, computeDive, shotOutcome } from '../aim';
 import { resolvePenalty, type PenaltyResult, type TakerInput, type KeeperInput } from '../resolve';
 import { createShootout, recordKick, currentRound, type ShootoutState, type Side } from '../shootout';
@@ -38,7 +39,12 @@ type GameMode = 'taker' | 'keeper';
 export class GameScene extends Phaser.Scene {
   private debug!: DebugOverlay;
   private world!: Phaser.GameObjects.Container; // static pitch visuals
-  private netGfx!: Phaser.GameObjects.Graphics; // the net (shakeable on a goal)
+  private netGfx!: Phaser.GameObjects.Graphics; // the net (Tier 1: live NetSim ripple)
+  private netSim = new NetSim(); // Tier 1 item 1 — spring-mass net, punched on a goal
+  private ballShadow!: Phaser.GameObjects.Image; // Tier 1 item 2 — grounded depth cue
+  private keeperShadow!: Phaser.GameObjects.Image;
+  private takerShadow!: Phaser.GameObjects.Image;
+  private hitStopTimer: number | null = null; // Tier 1 item 4 — real-time freeze timer
   private fx!: Phaser.GameObjects.Graphics; // swipe / aim feedback overlay
   private powerGfx!: Phaser.GameObjects.Graphics; // live power meter (Phase 1)
   private ball!: Phaser.GameObjects.Container;
@@ -93,9 +99,20 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.world = this.add.container(0, 0);
 
-    // Net is its own object so it can shake on a goal (sits above the frame,
-    // below the actors).
+    // Net is its own object so it can ripple on a goal (sits above the frame,
+    // below the actors). The bulge is driven by NetSim (Tier 1, item 1).
     this.netGfx = this.add.graphics().setDepth(10);
+
+    // Soft grounded shadows (Tier 1, item 2). One reusable blurred-ellipse texture,
+    // instanced under the ball + both figures. Depth 6 = above the pitch, below the
+    // net frame (10) and the actors (380+).
+    this.ensureSoftShadowTexture();
+    this.ballShadow = this.add.image(0, 0, 'softShadow').setDepth(6).setVisible(false);
+    this.keeperShadow = this.add.image(0, 0, 'softShadow').setDepth(6).setVisible(false);
+    this.takerShadow = this.add.image(0, 0, 'softShadow').setDepth(6).setVisible(false);
+    for (const s of [this.ballShadow, this.keeperShadow, this.takerShadow]) {
+      s.setTint(0x000000).setAlpha(CONFIG.JUICE.shadow.groundAlpha);
+    }
 
     // Movable actors (the pitch behind them is static).
     this.ballGfx = this.add.graphics();
@@ -122,6 +139,7 @@ export class GameScene extends Phaser.Scene {
       .text(0, 0, '', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '64px', color: '#ffffff' })
       .setOrigin(0.5)
       .setDepth(900)
+      .setScrollFactor(0) // pinned to the screen so the dynamic camera can't drift it
       .setVisible(false);
 
     // Minimal mode toggle (full Splash → Mode-select menu is Milestone 6 / §12).
@@ -169,6 +187,8 @@ export class GameScene extends Phaser.Scene {
         createShootout,
         recordKick, // expose the pure shootout logic for headless unit tests
         getState: () => ({ mode: this.mode, state: this.state, diveCaptured: this.diveCaptured }),
+        getTimeScale: () => ({ clock: this.time.timeScale, tweens: this.tweens.timeScale }), // hit-stop check
+        getNetEnergy: () => (this.netSim.isSettled() ? 0 : 1), // 0 = net at rest
         getShootout: () => this.shootout,
         setMode: (m: GameMode) => this.setMode(m),
         setKeeperDifficulty: (d: number) => {
@@ -191,10 +211,130 @@ export class GameScene extends Phaser.Scene {
     this.scale.on('resize', this.onResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.alive = false;
+      this.endHitStop(); // clear any pending hit-stop timer + restore timeScale
       this.scale.off('resize', this.onResize, this);
     });
 
     this.startSession();
+  }
+
+  // Per-frame: advance the net ripple (Tier 1, item 1). Only steps while the net
+  // has energy (settled → free) and never during a hit-stop freeze (timeScale 0),
+  // so the freeze holds the net still too.
+  update(): void {
+    if (this.mode === 'taker' && this.time.timeScale > 0 && !this.netSim.isSettled()) {
+      if (this.netSim.step()) this.drawNet();
+    }
+  }
+
+  // ── Tier 1, item 1: net ripple ────────────────────────────────────────────
+  /** Transfer the ball's impact into the net at a normalised goal point (0..1). */
+  private punchNet(normX: number, normY: number, power: number): void {
+    if (this.mode !== 'taker') return; // keeper-view goal frame is static (no sim net)
+    this.netSim.punch(normX, normY, power);
+    this.drawNet();
+  }
+
+  // ── Tier 1, item 2: build the reusable soft-shadow texture once ───────────
+  private ensureSoftShadowTexture(): void {
+    if (this.textures.exists('softShadow')) return;
+    const size = 64;
+    const tex = this.textures.createCanvas('softShadow', size, size);
+    if (!tex) return;
+    const ctx = tex.getContext();
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, 'rgba(255,255,255,1)'); // white → tinted black at runtime
+    grad.addColorStop(0.55, 'rgba(255,255,255,0.75)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)'); // soft blurred edge
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    tex.refresh();
+  }
+
+  /** Place the ball's shadow on the ground for a given ground point, ball scale and
+   *  "lift" (0 = on the ground, 1 = top of the arc). Higher = smaller + fainter. */
+  private positionBallShadow(groundX: number, groundY: number, ballScale: number, liftFrac: number): void {
+    if (!CONFIG.JUICE.shadow.enabled) return;
+    const S = CONFIG.JUICE.shadow;
+    const r = this.layout.ball.r;
+    const lift = Phaser.Math.Clamp(liftFrac, 0, 1);
+    const scale = ballScale * Phaser.Math.Linear(1, S.minScale, lift);
+    const w = r * 2 * S.ballScaleX * scale;
+    const h = r * 2 * S.ballScaleY * scale;
+    this.ballShadow
+      .setVisible(true)
+      .setPosition(groundX, groundY)
+      .setDisplaySize(w, h)
+      .setAlpha(Phaser.Math.Linear(S.groundAlpha, S.minAlpha, lift));
+  }
+
+  /** Static grounded shadow under a figure (keeper / taker). */
+  private positionActorShadow(img: Phaser.GameObjects.Image, x: number, feetY: number, figW: number): void {
+    if (!CONFIG.JUICE.shadow.enabled) {
+      img.setVisible(false);
+      return;
+    }
+    const S = CONFIG.JUICE.shadow;
+    img.setVisible(true).setPosition(x, feetY).setDisplaySize(figW * S.actorScaleX, figW * S.actorScaleY).setAlpha(S.groundAlpha);
+  }
+
+  // ── Tier 1, item 3: dynamic camera ────────────────────────────────────────
+  // Subtle, always-eased framing. A "beat" pans partway toward a focus point and
+  // zooms in a touch; resetCamera eases (or snaps) back to the neutral penalty view.
+  private cameraBeat(kind: 'aim' | 'strike' | 'goal' | 'save', focus?: { x: number; y: number }): void {
+    const C = CONFIG.JUICE.camera;
+    if (!C.enabled) return;
+    const cam = this.cameras.main;
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+    const zoom = kind === 'aim' ? C.aimZoom : kind === 'strike' ? C.strikeZoom : kind === 'goal' ? C.goalZoom : C.saveZoom;
+    // Recenter only PARTWAY toward the focus so the goal never leaves the frame.
+    const fx = focus ? Phaser.Math.Linear(cx, focus.x, C.focusStrength) : cx;
+    const fy = focus ? Phaser.Math.Linear(cy, focus.y, C.focusStrength) : cy;
+    const dur = kind === 'aim' ? C.returnMs : C.moveMs;
+    cam.pan(fx, fy, dur, C.ease, true);
+    cam.zoomTo(zoom, dur, C.ease, true);
+  }
+
+  /** Ease (ms>0) or snap (ms<=0) the camera back to the neutral, centred view. */
+  private resetCamera(ms: number): void {
+    const cam = this.cameras.main;
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+    if (ms <= 0 || !CONFIG.JUICE.camera.enabled) {
+      cam.panEffect.reset();
+      cam.zoomEffect.reset();
+      cam.setZoom(1);
+      cam.centerOn(cx, cy);
+      return;
+    }
+    cam.pan(cx, cy, ms, CONFIG.JUICE.camera.ease, true);
+    cam.zoomTo(1, ms, CONFIG.JUICE.camera.ease, true);
+  }
+
+  // ── Tier 1, item 4: hit-stop ──────────────────────────────────────────────
+  // Freeze the game clock + tweens for a few real milliseconds at contact, then
+  // restore. Uses window.setTimeout (NOT a scene timer) because the scene clock is
+  // frozen during the stop. abortAll() always restores it, so a resize/mode-switch
+  // mid-freeze can never leave the game stuck.
+  private hitStop(ms: number): void {
+    if (!CONFIG.JUICE.hitStop.enabled || ms <= 0) return;
+    if (this.hitStopTimer !== null) clearTimeout(this.hitStopTimer);
+    this.time.timeScale = 0;
+    this.tweens.timeScale = 0;
+    this.hitStopTimer = window.setTimeout(() => {
+      this.hitStopTimer = null;
+      this.endHitStop();
+    }, ms);
+  }
+
+  private endHitStop(): void {
+    if (this.hitStopTimer !== null) {
+      clearTimeout(this.hitStopTimer);
+      this.hitStopTimer = null;
+    }
+    this.time.timeScale = 1;
+    this.tweens.timeScale = 1;
   }
 
   // ── Session controller ────────────────────────────────────────────────────
@@ -302,11 +442,24 @@ export class GameScene extends Phaser.Scene {
     if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
     this.debug.setLines(['OPPONENT KICK', 'target ' + targetZone, scored ? '→ scores' : '→ saved']);
 
-    await this.flyBall(start, scored ? target : { x: hp.x, y: hp.y }, 0, dur);
-    if (!scored) await this.deflectBall(hp.x, hp.y);
+    const end = scored ? target : { x: hp.x, y: hp.y };
+    this.cameraBeat('strike', end); // same strike framing as a player kick (Tier 1)
+    this.hitStop(CONFIG.JUICE.hitStop.strikeMs);
+    await this.flyBall(start, end, 0, dur);
+
+    const C = CONFIG.COLORS;
+    if (scored) {
+      // GOAL against us — ripple the net at the entry point + celebration framing.
+      const goalRect = this.layout.goal;
+      this.punchNet((target.x - goalRect.x) / goalRect.width, (target.y - goalRect.y) / goalRect.height, 0.8);
+      this.cameraBeat('goal', end);
+    } else {
+      this.hitStop(CONFIG.JUICE.hitStop.saveMs);
+      await this.deflectBall(hp.x, hp.y);
+      this.cameraBeat('save', { x: hp.x, y: hp.y });
+    }
 
     // For the player, the opponent MISSING is the good news (cheer), scoring is bad.
-    const C = CONFIG.COLORS;
     await this.announceOutcome(scored ? 'GOAL' : 'SAVED!', scored ? C.outcomeGoal : C.outcomeSave, !scored, scored);
     return scored;
   }
@@ -447,7 +600,9 @@ export class GameScene extends Phaser.Scene {
     this.fx.clear();
     this.hidePowerMeter();
     this.outcomeText.setVisible(false);
-    this.netGfx.setPosition(0, 0); // cancel any leftover shake
+    this.netSim.reset(); // settle any leftover ripple
+    if (this.mode === 'taker') this.drawNet();
+    this.resetCamera(CONFIG.JUICE.camera.returnMs); // ease back to the neutral view
     this.resetBall();
     this.resetKeeper();
     this.resetTaker();
@@ -458,6 +613,7 @@ export class GameScene extends Phaser.Scene {
     this.epoch++; // invalidate the current kick's post-await steps
     this.human.cancel(); // unblock a pending aim / dive wait
     this.abortAll(); // resolve any pending animations/delays
+    this.resetCamera(0); // snap to neutral for the NEW layout (no cross-layout pan)
     this.rebuild(gameSize.width, gameSize.height);
     this.fx.clear();
     this.outcomeText.setPosition(gameSize.width / 2, gameSize.height * 0.42);
@@ -488,6 +644,7 @@ export class GameScene extends Phaser.Scene {
     // Tear down any in-flight kick and start a fresh session for the new mode.
     this.epoch++;
     this.human.cancel();
+    this.resetCamera(0); // snap to neutral for the new view
     // The camera changes with the mode, so rebuild the whole scene for the new view.
     this.rebuild(this.scale.width, this.scale.height);
     this.enterAiming();
@@ -539,6 +696,8 @@ export class GameScene extends Phaser.Scene {
   private onAimSwipe(phase: SwipePhase, points: SwipePoint[]): void {
     if (this.state !== 'aiming') return; // ignore input while a kick is resolving
 
+    if (phase === 'start') this.cameraBeat('aim'); // subtle push-in as the player aims
+
     if (points.length < 2) {
       if (phase === 'start') this.fx.clear();
       return;
@@ -556,6 +715,7 @@ export class GameScene extends Phaser.Scene {
     if (phase === 'end' && sample.distance < minDist) {
       this.fx.clear();
       this.hidePowerMeter();
+      this.resetCamera(CONFIG.JUICE.camera.returnMs); // no shot → drop the aim push-in
       this.showIdleDebug();
       return;
     }
@@ -621,8 +781,19 @@ export class GameScene extends Phaser.Scene {
       'timing ' + result.timingQuality.toFixed(2) + '   reach ' + result.reachMargin.toFixed(2),
     ]);
 
+    // Strike: snap the camera toward the goal + a micro hit-stop for weight (Tier 1).
+    this.cameraBeat('strike', end);
+    this.hitStop(CONFIG.JUICE.hitStop.strikeMs);
+
     await this.flyBall(start, end, bendPx, dur);
-    if (result.saved) await this.deflectBall(handX, handY);
+
+    if (result.saved) {
+      this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" as the ball meets the gloves
+      await this.deflectBall(handX, handY);
+    } else if (result.scored) {
+      // GOAL — punch the net at the ball's entry point (Tier 1, item 1).
+      this.punchNet(taker.landingNorm.x, taker.landingNorm.y, taker.power);
+    }
   }
 
   // Keeper mode: the ball + the player's dive already animated during the
@@ -633,6 +804,7 @@ export class GameScene extends Phaser.Scene {
     const goal = this.layout.goal;
     const handX = goal.x + result.keeperNorm.x * goal.width;
     const handY = goal.y + result.keeperNorm.y * goal.height;
+    this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" on the save (Tier 1, item 4)
     await this.deflectBall(handX, handY);
   }
 
@@ -676,6 +848,10 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(CONFIG.KEEPER.readyMs + C.tellLeadTime, () => {
       this.kickTakerFigure(tellSide);
       if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
+      // Camera snap toward the incoming ball. NOTE: no hit-stop here on purpose —
+      // the keeper's dive timing is measured against the wall clock, and freezing
+      // time.timeScale at the strike would desync that read-and-react window.
+      this.cameraBeat('strike', end);
       void this.flyBall(start, end, bendPx, C.flightTime, CONFIG.KEEPER.flightScaleStart, CONFIG.KEEPER.flightScaleEnd);
     });
 
@@ -717,11 +893,18 @@ export class GameScene extends Phaser.Scene {
       ease: F.easing,
       onUpdate: () => {
         const t = prog.t;
+        const lift = arcPx * Math.sin(Math.PI * t); // height above the straight path
         const x = start.x + (end.x - start.x) * t + bendPx * Math.sin(Math.PI * t);
-        const y = start.y + (end.y - start.y) * t - arcPx * Math.sin(Math.PI * t);
+        const groundY = start.y + (end.y - start.y) * t; // path y BEFORE the arc lift
+        const y = groundY - lift;
+        const s = scaleStart + (scaleEnd - scaleStart) * t;
         this.ball.setPosition(x, y);
-        this.ball.setScale(scaleStart + (scaleEnd - scaleStart) * t);
+        this.ball.setScale(s);
         this.ball.setRotation(t * Math.PI * 2 * F.spinTurns);
+        // Grounded shadow tracks the ball's GROUND point and shrinks/fades with lift
+        // (Tier 1, item 2): the higher the ball, the smaller + fainter + more offset.
+        const liftFrac = arcPx > 0 ? lift / arcPx : 0;
+        this.positionBallShadow(x, groundY + this.layout.ball.r * 0.9 * s, s, liftFrac);
       },
     });
   }
@@ -732,6 +915,10 @@ export class GameScene extends Phaser.Scene {
     const feetY = handY + this.layout.keeper.h * 0.5; // place the body so the gloves cover handY
     const lean = Phaser.Math.Clamp((handX - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.7;
     this.tweens.add({ targets: this.keeper, x: handX, y: feetY, rotation: lean, duration: durationMs, ease: 'Quad.easeOut' });
+    // The grounded shadow slides along the ground with the dive (Tier 1, item 2).
+    if (CONFIG.JUICE.shadow.enabled) {
+      this.tweens.add({ targets: this.keeperShadow, x: handX, duration: durationMs, ease: 'Quad.easeOut' });
+    }
   }
 
   /** Short rebound off the keeper's gloves after a save. */
@@ -773,6 +960,11 @@ export class GameScene extends Phaser.Scene {
     // Whether the PLAYER won this kick. Taker mode: a goal. Keeper mode: a save.
     const playerWon = this.mode === 'keeper' ? result.saved : result.scored;
 
+    // Outcome framing (Tier 1, item 3): celebrate a goal on the net, favour the
+    // keeper on a save, then ease back to neutral on the next enterAiming.
+    if (result.scored) this.cameraBeat('goal', { x: this.ball.x, y: this.ball.y });
+    else if (result.saved) this.cameraBeat('save', { x: this.keeper.x, y: this.keeper.y });
+
     if (CONFIG.HAPTICS.enabled) {
       const ms = result.saved ? CONFIG.HAPTICS.saveMs : result.scored ? CONFIG.HAPTICS.goalMs : 0;
       if (ms) navigator.vibrate?.(ms);
@@ -783,10 +975,11 @@ export class GameScene extends Phaser.Scene {
   /** Show the big centred banner + crowd + net shake for one kick. `playerWon`
    *  drives the celebration; `isGoal` (the ball physically hit the net) drives the
    *  net shake. Shared by player kicks and simulated opponent kicks (Phase 3). */
-  private async announceOutcome(label: string, color: number, playerWon: boolean, isGoal: boolean): Promise<void> {
+  private async announceOutcome(label: string, color: number, playerWon: boolean, _isGoal: boolean): Promise<void> {
     if (playerWon) this.sfx.cheer();
     else this.sfx.groan();
-    if (isGoal) this.shakeNet();
+    // (The net reaction is now a localized ripple punched at the entry point during
+    // the flight — see punchNet — not a whole-net shake here.)
 
     this.outcomeText
       .setText(label)
@@ -811,25 +1004,6 @@ export class GameScene extends Phaser.Scene {
 
     await this.delayP(CONFIG.UI.outcomeHoldMs);
     this.outcomeText.setVisible(false);
-  }
-
-  /** Brief damped jitter of the net — used only on a scored goal. */
-  private shakeNet(): void {
-    const amp = this.layout.goal.width * CONFIG.UI.netShakeAmpFrac;
-    const o = { p: 0 };
-    this.tweens.add({
-      targets: o,
-      p: 1,
-      duration: CONFIG.UI.netShakeMs,
-      ease: 'Linear',
-      onUpdate: () => {
-        const t = o.p;
-        const damp = 1 - t;
-        this.netGfx.x = Math.sin(t * Math.PI * 9) * amp * damp;
-        this.netGfx.y = Math.cos(t * Math.PI * 7) * amp * 0.5 * damp;
-      },
-      onComplete: () => this.netGfx.setPosition(0, 0),
-    });
   }
 
   // ── Awaitable, abortable timers/tweens (so a resize can't deadlock the loop)
@@ -861,6 +1035,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private abortAll(): void {
+    this.endHitStop(); // never leave the game frozen if we abort mid hit-stop
     this.tweens.killAll();
     this.time.removeAllEvents();
     const pending = this.activeResolvers.slice();
@@ -959,9 +1134,9 @@ export class GameScene extends Phaser.Scene {
       this.drawNearGoalFrame();
     } else {
       this.drawGoal();
+      this.netSim.resize(this.layout.goal); // (re)build the net grid for this goal
       this.drawNet();
       this.drawZoneGrid();
-      this.drawBallShadow();
     }
 
     this.resetBall();
@@ -1001,12 +1176,16 @@ export class GameScene extends Phaser.Scene {
     // Keeper's-eye: at rest the ball sits far away (small). Taker view: full size.
     const restScale = this.mode === 'keeper' ? CONFIG.KEEPER.flightScaleStart : 1;
     this.ball.setScale(restScale).setRotation(0).setPosition(this.layout.ball.x, this.layout.ball.y);
+    // Grounded ball shadow at rest (Tier 1, item 2): on the ground, full size.
+    const b = this.layout.ball;
+    this.positionBallShadow(b.x, b.y + b.r * 0.9, restScale, 0);
   }
 
   private resetKeeper(): void {
     const k = this.layout.keeper;
     this.drawKeeperGraphic(k.w, k.h);
     this.keeper.setRotation(0).setPosition(k.x, k.feetY);
+    this.positionActorShadow(this.keeperShadow, k.x, k.feetY, k.w);
   }
 
   /** Reset the CPU striker, shown only in Keeper mode. */
@@ -1014,6 +1193,8 @@ export class GameScene extends Phaser.Scene {
     const t = this.layout.taker;
     this.drawTakerGraphic(t.w, t.h);
     this.takerFigure.setRotation(0).setScale(1).setPosition(t.x, t.feetY).setVisible(this.mode === 'keeper');
+    if (this.mode === 'keeper') this.positionActorShadow(this.takerShadow, t.x, t.feetY, t.w);
+    else this.takerShadow.setVisible(false);
   }
 
   private showIdleDebug(): void {
@@ -1093,20 +1274,39 @@ export class GameScene extends Phaser.Scene {
     g.fillRect(left - t / 2, top - t / 2, goal.width + t, t);
   }
 
+  /** Draw the net as polylines through the NetSim nodes, so a punched bulge curves
+   *  the hatch lines where the ball went in (Tier 1, item 1). At rest every node is
+   *  flat, so this is pixel-identical to the old static net. */
   private drawNet(): void {
-    const r = this.layout.goal;
-    const geo = CONFIG.GEOMETRY;
+    const sim = this.netSim;
+    const cols = sim.gridCols;
+    const rows = sim.gridRows;
     const g = this.netGfx;
     g.clear();
-    this.netGfx.setPosition(0, 0);
+    g.setPosition(0, 0);
     g.lineStyle(1, CONFIG.COLORS.net, 0.18);
-    for (let c = 1; c < geo.netCols; c++) {
-      const x = r.x + (c / geo.netCols) * r.width;
-      g.lineBetween(x, r.y, x, r.y + r.height);
+
+    // Interior verticals (each as a polyline down its column).
+    for (let c = 1; c < cols; c++) {
+      const p0 = sim.point(c, 0);
+      g.beginPath();
+      g.moveTo(p0.x, p0.y);
+      for (let row = 1; row <= rows; row++) {
+        const p = sim.point(c, row);
+        g.lineTo(p.x, p.y);
+      }
+      g.strokePath();
     }
-    for (let row = 1; row < geo.netRows; row++) {
-      const y = r.y + (row / geo.netRows) * r.height;
-      g.lineBetween(r.x, y, r.x + r.width, y);
+    // Interior horizontals (each as a polyline across its row).
+    for (let row = 1; row < rows; row++) {
+      const p0 = sim.point(0, row);
+      g.beginPath();
+      g.moveTo(p0.x, p0.y);
+      for (let c = 1; c <= cols; c++) {
+        const p = sim.point(c, row);
+        g.lineTo(p.x, p.y);
+      }
+      g.strokePath();
     }
   }
 
@@ -1127,13 +1327,6 @@ export class GameScene extends Phaser.Scene {
         this.world.add(label);
       }
     }
-  }
-
-  private drawBallShadow(): void {
-    const ball = this.layout.ball;
-    const g = this.g();
-    g.fillStyle(0x000000, 0.22);
-    g.fillEllipse(ball.x, ball.y + ball.r * 0.9, ball.r * 1.8, ball.r * 0.5);
   }
 
   // Ball modelled on the adidas "Trionda" (FIFA World Cup 2026): white base with

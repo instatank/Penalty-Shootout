@@ -61,7 +61,14 @@ Stop at every ⏸ checkpoint for the owner to playtest before continuing.**
 
 ---
 
-## TIER 1 — Highest payoff (items 1–4). ⏸ STOP for owner review after this tier.
+## TIER 1 — Highest payoff (items 1–4). ✅ BUILT — ⏸ awaiting owner playtest.
+> Status (2026-06-29): all four items implemented, `npm run build` clean, headless
+> smoke green (6/6 goals ripple the net then settle; hit-stop freeze observed +
+> always restored; mode-switch taker↔keeper clean; no console/page errors). New
+> code: `src/game/net/NetSim.ts`; `CONFIG.JUICE` (net/shadow/camera/hitStop);
+> GameScene `update()`, `punchNet`, `positionBallShadow`/`positionActorShadow`,
+> `cameraBeat`/`resetCamera`, `hitStop`/`endHitStop`. The old whole-net `shakeNet`
+> + static `drawBallShadow` were removed (superseded). Tune via `CONFIG.JUICE`.
 
 ### Step 1.1 — Dynamic net (the money shot)
 **Approach:** a verlet point-grid spring sim, rendered each frame by redrawing

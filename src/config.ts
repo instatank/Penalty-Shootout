@@ -369,8 +369,8 @@ const UI = {
   outcomeHoldMs: 1200, // how long the GOAL/SAVE/MISS banner stays up
   betweenKicksMs: 250, // small beat before the ball resets for the next kick
   goalZoomPeak: 1.3, // banner overshoot scale on a GOAL (celebratory pop)
-  netShakeAmpFrac: 0.014, // net shake amplitude as a fraction of goal width (goal only)
-  netShakeMs: 480, // net shake duration
+  // (Net feedback moved from a whole-net shake to a localized NetSim ripple punched
+  //  at the ball's entry point — see CONFIG.JUICE.net.)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -381,6 +381,70 @@ const UI = {
 const SOUND = {
   enabled: true,
   volume: 0.4,
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JUICE — game-feel layer (docs/juice-brief.md). Motion, lighting, camera and
+// feedback that make the game read as a polished product. PRESENTATION ONLY: none
+// of this touches resolvePenalty or the provider-agnostic kick loop. Every effect
+// has a tunable intensity and a SUBTLE default — more is not better. Built tier by
+// tier; this group grows as tiers land. Tier 1 = net / shadow / camera / hitStop.
+// ─────────────────────────────────────────────────────────────────────────────
+const JUICE = {
+  // ── 1. Dynamic net (NetSim) ──────────────────────────────────────────────
+  // A damped-wave membrane: a scored ball punches the nearest nodes, the bulge
+  // propagates, overshoots and settles. Keep stiffness < 0.5 for stability.
+  net: {
+    stiffness: 0.3, // neighbour coupling — how fast a ripple spreads across the net
+    springBack: 0.06, // pull each node back toward flat (its natural frequency)
+    damping: 0.05, // velocity damping per pass (lower = the net rings longer)
+    iterations: 2, // integration passes per frame (more = stiffer/faster waves)
+    impulse: 1.8, // base bulge depth (in node-spacing units) at full power
+    impactRadiusFrac: 0.22, // gaussian punch radius as a fraction of goal width
+    pushXFrac: 0.0, // screen offset per unit z, sideways (0 = straight back)
+    pushYFrac: 0.6, // ...and downward, so the bulge billows down + back into goal
+    maxBulge: 3.0, // hard clamp on |z| (node-spacing units) — anti-explosion safety
+    settleEps: 0.004, // below this depth + velocity everywhere → snap to rest (free)
+  },
+
+  // ── 2. Grounded shadows ──────────────────────────────────────────────────
+  // A separate soft ellipse under each actor. The ball's shadow scales DOWN and
+  // fades as the ball rises (off the ground), and grows/sharpens as it descends.
+  shadow: {
+    enabled: true,
+    groundAlpha: 0.3, // opacity when the actor is on the ground
+    minAlpha: 0.06, // opacity at the top of the ball's arc (most "lifted")
+    minScale: 0.5, // shadow scale multiplier at the top of the arc
+    ballScaleX: 1.9, // ball-shadow width  vs ball radius
+    ballScaleY: 0.55, // ball-shadow height vs ball radius (a flat ellipse)
+    actorScaleX: 1.4, // keeper/taker shadow width  vs figure width
+    actorScaleY: 0.3, // keeper/taker shadow height vs figure width
+  },
+
+  // ── 3. Dynamic camera ────────────────────────────────────────────────────
+  // Subtle, always-eased pushes that react differently to aim / strike / goal /
+  // save, then re-frame to neutral. Pure cameras.main work (pan + zoomTo).
+  camera: {
+    enabled: true,
+    aimZoom: 1.04, // gentle push-in while aiming / before a CPU strike
+    strikeZoom: 1.08, // quick punch toward the ball at the moment of the strike
+    goalZoom: 1.14, // celebration framing on a goal
+    saveZoom: 1.12, // framing that favours the keeper on a save
+    focusStrength: 0.32, // how far the camera recenters toward the focus point (0..1)
+    moveMs: 240, // pan/zoom duration for a beat
+    returnMs: 420, // ease back to the neutral penalty view between kicks
+    holdMs: 650, // hold the goal/save framing before returning
+    ease: 'Sine.easeInOut',
+  },
+
+  // ── 4. Hit-stop ──────────────────────────────────────────────────────────
+  // A micro-freeze (timeScale → 0) at contact, restored on a REAL-time timer so it
+  // works even though the game clock is frozen. Short = weight, not lag.
+  hitStop: {
+    enabled: true,
+    strikeMs: 65, // freeze at ball-strike
+    saveMs: 90, // freeze when the ball meets the keeper (a save)
+  },
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -408,6 +472,7 @@ export const CONFIG = {
   HAPTICS,
   UI,
   SOUND,
+  JUICE,
   DEBUG,
 } as const;
 
