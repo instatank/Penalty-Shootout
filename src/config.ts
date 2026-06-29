@@ -485,6 +485,47 @@ const JUICE = {
     spinMax: 1.9, // ...at high power (faster visible spin)
     color: 0xfff2cc, // warm white/gold streak
   },
+
+  // ── 8. Slow-motion replay (Tier 3) ───────────────────────────────────────
+  // After a corner goal / a save, re-simulate the resolved shot at a slowed flight
+  // speed from a tight, dramatic camera. Tap anywhere to skip. Presentation-only —
+  // it re-runs the SAME deterministic flight, never re-resolves.
+  replay: {
+    enabled: true,
+    slowFactor: 2.6, // flight-duration multiplier (higher = slower replay)
+    zoom: 1.5, // dramatic push-in for the replay camera
+    inMs: 520, // ease-in time for the replay framing + label
+    holdMs: 420, // hold on the final frame before returning to play
+    onCornerGoals: true, // replay a taker goal struck into a corner
+    onSaves: true, // replay a keeper-mode save
+  },
+
+  // ── 9. Post-processing grade (Tier 3) ────────────────────────────────────
+  // WebGL-only camera FX (vignette + restrained floodlight bloom + a subtle colour
+  // grade) for one cohesive look. Gracefully no-ops on the Canvas renderer. Keep
+  // bloom LOW — heavy bloom reads cheap.
+  grade: {
+    enabled: true,
+    vignetteStrength: 0.45, // edge darkening (0 = none)
+    vignetteRadius: 0.78, // how far in the vignette reaches (1 = edges only)
+    bloomStrength: 0.65, // floodlight glow strength — restrained on purpose
+    bloomBlur: 1.1, // bloom blur radius
+    saturate: 1.06, // colour-grade saturation (1 = unchanged)
+    brightness: 1.02, // colour-grade brightness (1 = unchanged)
+    floodlights: true, // draw bright light banks for the bloom to sit on
+  },
+
+  // ── 10. UI / transition juice (Tier 3) ───────────────────────────────────
+  // No hard cuts: eased entrances, count-up score, tactile button press states.
+  ui: {
+    pressScale: 0.92, // button scale on press-down
+    releaseMs: 220, // bounce-back time on release (Back.easeOut)
+    endInMs: 360, // end-screen element entrance time
+    endStaggerMs: 110, // delay between staggered end-screen elements
+    countUpMs: 650, // final-score count-up duration
+    scorePopScale: 1.18, // scoreboard pop scale when the score changes
+    scorePopMs: 260,
+  },
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

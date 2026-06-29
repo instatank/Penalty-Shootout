@@ -36,6 +36,9 @@ type SceneState = 'aiming' | 'busy' | 'keeping';
 // keeper — the kick loop itself never changes (PRD §8).
 type GameMode = 'taker' | 'keeper';
 
+// The four corner zones — a taker goal into one of these is "replay-worthy" (Tier 3).
+const CORNER_ZONES = new Set<ZoneId>(['TL', 'TR', 'BL', 'BR']);
+
 export class GameScene extends Phaser.Scene {
   private debug!: DebugOverlay;
   private world!: Phaser.GameObjects.Container; // static pitch visuals
@@ -51,6 +54,9 @@ export class GameScene extends Phaser.Scene {
   private dustEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private confettiEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private ballTrail!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private replayLabel!: Phaser.GameObjects.Text; // Tier 3 — "REPLAY" badge
+  private replaySkip = false; // Tier 3 — tap-to-skip flag during a replay
+  private lastScoreStr = ''; // Tier 3 — detect a score change to pop the scoreboard
   private fx!: Phaser.GameObjects.Graphics; // swipe / aim feedback overlay
   private powerGfx!: Phaser.GameObjects.Graphics; // live power meter (Phase 1)
   private ball!: Phaser.GameObjects.Container;
@@ -151,6 +157,14 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0) // pinned to the screen so the dynamic camera can't drift it
       .setVisible(false);
 
+    // "REPLAY" badge (Tier 3) — top-centre during a slow-mo replay, screen-pinned.
+    this.replayLabel = this.add
+      .text(0, 0, '▶ REPLAY', { fontFamily: 'monospace', fontStyle: 'bold', fontSize: '20px', color: '#ffffff', backgroundColor: '#00000066', padding: { x: 10, y: 6 } })
+      .setOrigin(0.5, 0)
+      .setDepth(905)
+      .setScrollFactor(0)
+      .setVisible(false);
+
     // Minimal mode toggle (full Splash → Mode-select menu is Milestone 6 / §12).
     // Lives in the lower thumb zone (PRD §12). Tap, or press "M", to switch.
     this.modeButton = this.add
@@ -186,6 +200,12 @@ export class GameScene extends Phaser.Scene {
 
     this.buildSessionUI(); // scoreboard + end screen (Phase 3)
 
+    // Tier 3: cohesive post-FX grade (WebGL only) + tactile button press states.
+    this.applyPostFX();
+    this.addButtonFeedback(this.modeButton);
+    this.addButtonFeedback(this.diffButton);
+    this.addButtonFeedback(this.endBtn);
+
     this.debug = new DebugOverlay(this);
     this.showIdleDebug();
 
@@ -206,6 +226,10 @@ export class GameScene extends Phaser.Scene {
           trail: this.ballTrail.getAliveParticleCount(),
         }),
         burstConfetti: () => this.burstConfetti(), // headless: exercise the win-confetti path
+        getRenderer: () => (this.renderer.type === Phaser.WEBGL ? 'webgl' : 'canvas'),
+        // Post FX live in the camera's postPipelines (not postFX.list). 0 on canvas / when disabled.
+        getPostFXCount: () => this.cameras.main.postPipelines.length,
+        isReplaying: () => this.replayLabel.visible, // headless: detect a running replay
         getShootout: () => this.shootout,
         setMode: (m: GameMode) => this.setMode(m),
         setKeeperDifficulty: (d: number) => {
@@ -489,6 +513,174 @@ export class GameScene extends Phaser.Scene {
     this.ballTrail?.stopFollow();
   }
 
+  // ── Tier 3, item 8: slow-motion replay ────────────────────────────────────
+  /** Is this kick worth a replay? Taker goal into a corner, or a keeper save. */
+  private isReplayWorthy(taker: TakerInput, result: PenaltyResult): boolean {
+    const R = CONFIG.JUICE.replay;
+    if (!R.enabled) return false;
+    if (this.mode === 'keeper') return R.onSaves && result.saved;
+    return R.onCornerGoals && result.scored && !!taker.landingZone && CORNER_ZONES.has(taker.landingZone);
+  }
+
+  /** Re-simulate the resolved shot in slow motion from a tight, dramatic camera.
+   *  Tap anywhere to skip. Re-runs the SAME deterministic flight — never re-resolves
+   *  — and is fully abort/epoch-safe (a resize/mode-switch cleanly ends it). */
+  private async playReplay(taker: TakerInput, result: PenaltyResult, epoch: number): Promise<void> {
+    const R = CONFIG.JUICE.replay;
+    const goal = this.layout.goal;
+    const handX = goal.x + result.keeperNorm.x * goal.width;
+    const handY = goal.y + result.keeperNorm.y * goal.height;
+
+    // Reset actors to pre-strike, then frame the contact point dramatically.
+    this.resetBall();
+    this.resetKeeper();
+    this.resetTaker();
+    const keeperMode = this.mode === 'keeper';
+    const start = { x: this.layout.ball.x, y: this.layout.ball.y };
+    const end = result.saved ? { x: handX, y: handY } : taker.landingPoint;
+    const bendPx = taker.curve * CONFIG.FLIGHT.curveGain * goal.width;
+    const focus = keeperMode ? { x: handX, y: handY } : end;
+
+    this.replaySkip = false;
+    const skip = () => {
+      this.replaySkip = true;
+      this.abortAll(); // resolve the in-flight replay tweens immediately
+    };
+    this.input.once('pointerdown', skip);
+
+    this.replayLabel.setPosition(this.scale.width / 2, 14).setVisible(true).setAlpha(0);
+    this.tweens.add({ targets: this.replayLabel, alpha: 1, duration: 200, ease: 'Quad.easeOut' });
+    this.cameraReplay(focus);
+
+    // Slowed durations (re-simulation, NOT timeScale — keeps hit-stop isolated).
+    const baseDur = keeperMode
+      ? CONFIG.CPU_TAKER.flightTime
+      : Phaser.Math.Linear(CONFIG.FLIGHT.flightDurationSlow, CONFIG.FLIGHT.flightDurationFast, taker.power);
+    const slowDur = baseDur * R.slowFactor;
+    const scaleStart = keeperMode ? CONFIG.KEEPER.flightScaleStart : CONFIG.FLIGHT.scaleStart;
+    const scaleEnd = keeperMode ? CONFIG.KEEPER.flightScaleEnd : CONFIG.FLIGHT.scaleEnd;
+
+    // Re-dive the keeper to the same point, slowed.
+    this.time.delayedCall(CONFIG.CPU_KEEPER.reactionDelay * R.slowFactor, () =>
+      this.diveKeeperTo(handX, handY, CONFIG.CPU_KEEPER.diveDuration * R.slowFactor),
+    );
+
+    await this.flyBall(start, end, bendPx, slowDur, scaleStart, scaleEnd, { power: taker.power });
+    if (!this.replaySkip && epoch === this.epoch) {
+      if (result.saved) {
+        await this.deflectBall(handX, handY);
+      } else if (result.scored) {
+        this.punchNet(taker.landingNorm.x, taker.landingNorm.y, taker.power);
+        this.burstNetSpray(end.x, end.y);
+      }
+      await this.delayP(R.holdMs);
+    }
+
+    // Cleanup (runs on normal finish AND on skip/abort).
+    this.input.off('pointerdown', skip);
+    this.replayLabel.setVisible(false);
+    this.resetCamera(0);
+  }
+
+  private cameraReplay(focus: { x: number; y: number }): void {
+    if (!CONFIG.JUICE.camera.enabled) return;
+    const R = CONFIG.JUICE.replay;
+    const cam = this.cameras.main;
+    cam.pan(focus.x, focus.y, R.inMs, CONFIG.JUICE.camera.ease, true);
+    cam.zoomTo(R.zoom, R.inMs, CONFIG.JUICE.camera.ease, true);
+  }
+
+  // ── Tier 3, item 9: post-processing grade (WebGL only) ────────────────────
+  private applyPostFX(): void {
+    const G = CONFIG.JUICE.grade;
+    if (!G.enabled) return;
+    if (this.renderer.type !== Phaser.WEBGL) return; // Canvas renderer → graceful no-op
+    const fx = this.cameras.main.postFX;
+    if (G.vignetteStrength > 0) fx.addVignette(0.5, 0.5, G.vignetteRadius, G.vignetteStrength);
+    if (G.bloomStrength > 0) fx.addBloom(0xffffff, 1, 1, G.bloomBlur, G.bloomStrength); // glows the bright floodlights
+    const cm = fx.addColorMatrix();
+    cm.brightness(G.brightness, true);
+    cm.saturate(G.saturate, true);
+  }
+
+  /** Bright floodlight banks at the top so the bloom has something to sit on. */
+  private drawFloodlights(): void {
+    if (!CONFIG.JUICE.grade.floodlights) return;
+    const { width } = this.layout;
+    const horizon = this.layout.horizonY;
+    const g = this.g();
+    const y = Math.max(8, horizon * 0.12);
+    const lampW = Math.max(26, width * 0.07);
+    const lampH = lampW * 0.42;
+    for (const cx of [width * 0.16, width * 0.84]) {
+      // Soft glow halo (bloom amplifies this).
+      g.fillStyle(0xfff6cc, 0.5);
+      g.fillCircle(cx, y + lampH * 0.5, lampW * 0.7);
+      // Bright lamp box + a hot white core.
+      g.fillStyle(0xfff2c4, 1);
+      g.fillRoundedRect(cx - lampW / 2, y, lampW, lampH, lampH * 0.3);
+      g.fillStyle(0xffffff, 1);
+      g.fillRoundedRect(cx - lampW * 0.34, y + lampH * 0.22, lampW * 0.68, lampH * 0.42, lampH * 0.2);
+    }
+  }
+
+  // ── Tier 3, item 10: UI / transition juice ────────────────────────────────
+  /** Tactile press feedback on a text button: scale-down on press, bounce back. */
+  private addButtonFeedback(txt: Phaser.GameObjects.Text): void {
+    if (!txt) return;
+    const U = CONFIG.JUICE.ui;
+    txt.on('pointerdown', () => txt.setScale(U.pressScale));
+    const release = () => this.tweens.add({ targets: txt, scale: 1, duration: U.releaseMs, ease: 'Back.easeOut' });
+    txt.on('pointerup', release);
+    txt.on('pointerout', release);
+  }
+
+  /** Eased, staggered entrance for the end screen + a count-up of the final score. */
+  private animateEndScreenIn(playerScore: number, oppScore: number): void {
+    const U = CONFIG.JUICE.ui;
+    this.endBg.setAlpha(0);
+    this.endTitle.setScale(0.6).setAlpha(0);
+    this.endScore.setAlpha(0);
+    this.endBtn.setScale(0.6).setAlpha(0);
+    this.tweens.add({ targets: this.endBg, alpha: 1, duration: U.endInMs, ease: 'Quad.easeOut' });
+    this.tweens.add({ targets: this.endTitle, scale: 1, alpha: 1, duration: U.endInMs, delay: U.endStaggerMs, ease: 'Back.easeOut' });
+    this.tweens.add({
+      targets: this.endScore,
+      alpha: 1,
+      duration: U.endInMs,
+      delay: U.endStaggerMs * 2,
+      ease: 'Quad.easeOut',
+      onComplete: () => this.countUpScore(playerScore, oppScore),
+    });
+    this.tweens.add({ targets: this.endBtn, scale: 1, alpha: 1, duration: U.endInMs, delay: U.endStaggerMs * 3, ease: 'Back.easeOut' });
+  }
+
+  private countUpScore(playerScore: number, oppScore: number): void {
+    const o = { p: 0 };
+    this.tweens.add({
+      targets: o,
+      p: 1,
+      duration: CONFIG.JUICE.ui.countUpMs,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => this.endScore.setText('FINAL   YOU  ' + Math.round(playerScore * o.p) + '  –  ' + Math.round(oppScore * o.p) + '  CPU'),
+    });
+  }
+
+  /** Snap the end screen to its final shown state (used after a resize abort). */
+  private snapEndScreen(): void {
+    const s = this.shootout;
+    this.endBg.setAlpha(1);
+    this.endTitle.setScale(1).setAlpha(1);
+    this.endScore.setScale(1).setAlpha(1).setText('FINAL   YOU  ' + s.player.scored + '  –  ' + s.opponent.scored + '  CPU');
+    this.endBtn.setScale(1).setAlpha(1);
+  }
+
+  private popScore(): void {
+    const U = CONFIG.JUICE.ui;
+    this.scoreText.setScale(1);
+    this.tweens.add({ targets: this.scoreText, scale: U.scorePopScale, duration: U.scorePopMs, yoyo: true, ease: 'Quad.easeOut' });
+  }
+
   // ── Session controller ────────────────────────────────────────────────────
   // Taker mode runs a full SHOOTOUT (Phase 3); Keeper mode stays a free practice
   // loop (Phase 4 will route it through the same shootout machine). Bumping
@@ -519,6 +711,8 @@ export class GameScene extends Phaser.Scene {
     await this.revealKick(taker, keeper, result);
     if (epoch !== this.epoch) return null;
     await this.showOutcome(result);
+    // Slow-mo replay of a great moment (Tier 3) — skippable, presentation-only.
+    if (epoch === this.epoch && this.isReplayWorthy(taker, result)) await this.playReplay(taker, result, epoch);
     return result;
   }
 
@@ -653,7 +847,7 @@ export class GameScene extends Phaser.Scene {
 
   private layoutSessionUI(w: number, h: number): void {
     if (!this.scoreboard) return;
-    this.scoreText.setPosition(w / 2, 6);
+    this.scoreText.setScale(1).setPosition(w / 2, 6); // reset any in-flight score pop
     this.scoreSub.setPosition(w / 2, 62);
     this.endBg.setPosition(w / 2, h / 2).setSize(w, h);
     this.endTitle.setPosition(w / 2, h * 0.4);
@@ -685,7 +879,10 @@ export class GameScene extends Phaser.Scene {
   private updateScoreboard(): void {
     if (!this.scoreboard) return;
     const s = this.shootout;
-    this.scoreText.setText('YOU  ' + s.player.scored + '  –  ' + s.opponent.scored + '  CPU');
+    const str = 'YOU  ' + s.player.scored + '  –  ' + s.opponent.scored + '  CPU';
+    if (this.lastScoreStr && this.lastScoreStr !== str) this.popScore(); // Tier 3 — pop on change
+    this.lastScoreStr = str;
+    this.scoreText.setText(str);
     this.scoreSub.setText(s.phase === 'suddenDeath' ? 'SUDDEN DEATH' : 'ROUND ' + Math.min(currentRound(s), s.regulationKicks) + ' / ' + s.regulationKicks);
     this.drawScoreDots();
   }
@@ -720,8 +917,9 @@ export class GameScene extends Phaser.Scene {
     const s = this.shootout;
     const win = winner === 'player';
     this.endTitle.setText(win ? 'YOU WIN!' : 'YOU LOSE').setColor(win ? '#4caf50' : '#ff7043');
-    this.endScore.setText('FINAL   YOU  ' + s.player.scored + '  –  ' + s.opponent.scored + '  CPU');
+    this.endScore.setText('FINAL   YOU  0  –  0  CPU'); // count-up fills this in
     this.setEndScreenVisible(true);
+    this.animateEndScreenIn(s.player.scored, s.opponent.scored); // Tier 3 — eased entrance + count-up
     if (win) {
       this.sfx.cheer();
       this.burstConfetti(); // Tier 2 — confetti rains over the win screen
@@ -782,6 +980,8 @@ export class GameScene extends Phaser.Scene {
     this.modeButton?.setY(gameSize.height - 8); // keep pinned to the bottom edge
     this.diffButton?.setPosition(gameSize.width - 8, gameSize.height - 8);
     this.layoutSessionUI(gameSize.width, gameSize.height);
+    if (this.endShown) this.snapEndScreen(); // restore the end screen if a resize aborted its entrance
+    this.replayLabel?.setVisible(false); // a replay can't survive a layout change
     this.showIdleDebug();
   }
 
@@ -1310,6 +1510,7 @@ export class GameScene extends Phaser.Scene {
     this.world.removeAll(true);
 
     this.drawBackground();
+    this.drawFloodlights(); // Tier 3 — bright banks for the bloom to sit on
     this.drawPenaltyBox();
 
     if (this.mode === 'keeper') {

@@ -52,9 +52,23 @@ results, never feeds them (online-replay determinism stays intact). All knobs li
   it would spoil the wall-clock read). Verified: build clean + headless (all five
   emitters fire at configured counts, timeScale restored, taker+keeper clean, no
   errors). Dev hooks: `__penalty.getParticleCounts()`, `burstConfetti()`.
-- **Tier 3 (next, on owner OK):** slow-mo replay, WebGL post-FX grade (vignette +
-  floodlight bloom), UI transition juice (count-up score, button press states, no
-  hard cuts).
+- **Tier 3 — DONE (awaiting owner playtest ⏸).** (8) **Slow-mo replay** — after a
+  taker goal into a CORNER or a keeper SAVE, `playReplay` re-simulates the SAME
+  deterministic flight at a slowed duration (NOT timeScale — keeps hit-stop isolated)
+  from a tight `cameraReplay` push-in, with a "▶ REPLAY" badge; **tap anywhere to
+  skip** (real pointer → scene input); fully abort/epoch-safe. (9) **Post-FX grade**
+  — `applyPostFX` adds vignette + restrained floodlight **bloom** + a subtle colour
+  grade to the main camera (WebGL only; graceful no-op on Canvas); `drawFloodlights`
+  paints bright banks for the bloom to sit on. **Phaser 3.90 gotcha:** camera *post*
+  FX live in `camera.postPipelines` (FX.add → setPostPipeline), NOT `postFX.list`.
+  (10) **UI transition juice** — eased + staggered end-screen entrance with a
+  **count-up** final score, **button press states** (scale-down + bounce on
+  MODE/difficulty/Play-Again), and a scoreboard **pop** when the score changes.
+  Knobs: `CONFIG.JUICE.replay/grade/ui`. Verified: build clean + headless (replay
+  fires/skips, 3 post-FX pipelines, end screen animates, timeScale restored, taker+
+  keeper clean, no errors). Dev hooks: `getRenderer()`, `getPostFXCount()`,
+  `isReplaying()`.
+- **Juice track COMPLETE** (all three tiers ⏸ awaiting a combined owner playtest).
 
 ## Stack (decided — do not substitute without asking the owner)
 - **Phaser 3.x** (pinned to 3.90.0). **NOT Phaser 4.**

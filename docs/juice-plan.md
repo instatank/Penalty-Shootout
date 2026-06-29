@@ -199,7 +199,17 @@ Stop at every ⏸ checkpoint for the owner to playtest before continuing.**
 
 ---
 
-## TIER 3 — The finish (items 8–10). Do once the rest feels good.
+## TIER 3 — The finish (items 8–10). ✅ BUILT — ⏸ awaiting owner playtest.
+> Status (2026-06-29): all three items implemented, build clean, headless smoke
+> green (replay fires on corner goals + keeper saves, ends naturally AND is
+> tap-skippable; WebGL post-FX applied = 3 pipelines: vignette + bloom + colour
+> grade, graceful no-op on Canvas; end screen animates in with count-up; timeScale
+> restored; no errors). New code: `playReplay`/`isReplayWorthy`/`cameraReplay`,
+> `applyPostFX` + `drawFloodlights`, `addButtonFeedback`/`animateEndScreenIn`/
+> `countUpScore`/`popScore`. Knobs: `CONFIG.JUICE.replay/grade/ui`.
+> **Phaser 3.90 note:** camera *post* FX register in `camera.postPipelines` (the
+> `FX.add` path calls `setPostPipeline`), NOT `postFX.list` — verify via
+> `__penalty.getPostFXCount()` = postPipelines length.
 
 ### Step 3.1 — Slow-motion replay
 - After a **goal** or a **notable save**, replay the last ~1.5s in slow motion from

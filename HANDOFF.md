@@ -120,8 +120,15 @@ loop** — reads results only. All knobs in **`CONFIG.JUICE`**.
   ball trail + spin (`flyBall` takes `{power}`). Knobs: `CONFIG.JUICE.shake/particles/
   trail`. Build clean + headless smoke green. Dev hooks: `getParticleCounts()`,
   `burstConfetti()`.
-- **Tier 3 next:** slow-mo replay, WebGL post-FX grade, UI transition juice.
-- Headless tip: `playwright-core` isn't a project dep — install `--no-save` for tests.
+- **Tier 3 — DONE, awaiting owner playtest ⏸:** skippable slow-mo replay (re-sims the
+  resolved flight slowed, on corner goals / saves; tap to skip), WebGL post-FX grade
+  (vignette + restrained floodlight bloom + colour grade; no-op on Canvas), and UI
+  transition juice (animated end-screen entrance + count-up score, button press
+  states, scoreboard pop). Knobs: `CONFIG.JUICE.replay/grade/ui`.
+- **The whole juice track is now built (Tiers 1–3), all ⏸ for a combined playtest.**
+- Headless tips: `playwright-core` isn't a project dep — install `--no-save`. Launch
+  Chromium with `--use-gl=swiftshader` to get WebGL (so the post-FX path is exercised).
+  Phaser 3.90 camera *post* FX register in `camera.postPipelines`, NOT `postFX.list`.
 
 ## What's next — Phase 4 (expected: Keeper-mode shootout)
 Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a
