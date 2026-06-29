@@ -126,11 +126,18 @@ export class LocalHumanProvider implements InputProvider {
  * Everything is derived from the kick `seed`, so the CPU is deterministic too.
  */
 export class CpuProvider implements InputProvider {
+  /** Live difficulty override (0..1). Falls back to CONFIG.CPU_KEEPER.difficulty.
+   *  Lets the owner change difficulty on the fly while playtesting (Phase 2). */
+  difficulty?: number;
+
   getKeeperInput(ctx: PenaltyContext, taker: TakerInput): Promise<KeeperInput | null> {
     const k = CONFIG.CPU_KEEPER;
+    const difficulty = this.difficulty ?? k.difficulty;
 
-    // Zone-guess accuracy scales with the single difficulty knob (PRD §5).
-    const acc = k.guessAccuracyMin + (k.guessAccuracyMax - k.guessAccuracyMin) * k.difficulty;
+    // Zone-guess accuracy scales with the difficulty knob — this is the keeper's
+    // READ. Difficulty is directional: the CPU commits on time (below), so it is
+    // beaten by a wrong read or a true corner, not by fumbled timing (Phase 2).
+    const acc = k.guessAccuracyMin + (k.guessAccuracyMax - k.guessAccuracyMin) * difficulty;
     const aim = taker.landingZone ?? taker.targetZone ?? 'BM';
     const { col, row } = zoneIndices(aim);
 
@@ -139,7 +146,8 @@ export class CpuProvider implements InputProvider {
     if (seededRandom(ctx.seed, 10) < acc) {
       // Good read: right column, usually right row.
       guessCol = col;
-      guessRow = seededRandom(ctx.seed, 12) < 0.65 ? row : row === 0 ? 1 : 0;
+      const rowAcc = k.rowAccuracyMin + (k.rowAccuracyMax - k.rowAccuracyMin) * difficulty;
+      guessRow = seededRandom(ctx.seed, 12) < rowAcc ? row : row === 0 ? 1 : 0;
     } else {
       // Wrong read: commit to a different column.
       const others = [0, 1, 2].filter((c) => c !== col);
@@ -148,9 +156,9 @@ export class CpuProvider implements InputProvider {
     }
     const diveZone = zoneFrom(guessCol, guessRow);
 
-    // Timing: better difficulty → tighter timing (smaller offset from ideal).
-    const spread = CONFIG.RESOLUTION.timingWindowMs * (k.timingSpreadMax - (k.timingSpreadMax - k.timingSpreadMin) * k.difficulty);
-    const diveTiming = (seededRandom(ctx.seed, 11) * 2 - 1) * spread;
+    // The CPU commits ON TIME (its hands reach the guess) — just a little jitter
+    // so it isn't robotic. Beatability is direction + corners, not timing.
+    const diveTiming = (seededRandom(ctx.seed, 11) * 2 - 1) * k.timingJitterMs;
 
     return Promise.resolve({ diveZone, diveTiming });
   }

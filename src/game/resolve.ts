@@ -2,12 +2,14 @@
  * resolve.ts — THE keystone (PRD §7). A single PURE, DETERMINISTIC function
  * decides every save/goal/miss in the game.
  *
- * Model (revised after playtest): GEOMETRIC, not a hidden dice roll. The keeper
- * saves when the ball lands within its dive REACH — an ellipse around the point
- * it actually dives to. Bad timing and high power shrink that reach; corners sit
- * outside it. So the outcome matches the visible ball↔keeper interaction: ball
- * meets keeper ⇒ save, ball beats keeper ⇒ goal. A small seeded band at the very
- * edge of reach keeps borderline shots lively (and replayable online).
+ * Model (Phase 2): GEOMETRIC reach, not a hidden dice roll. The keeper's hands
+ * travel from goal centre toward the dive target; the ball is saved if it lands
+ * within the reach ellipse around where the hands have ACTUALLY reached when it
+ * arrives (a late dive = hands still near centre). High power shrinks reach a
+ * touch; the extreme corners sit outside reach (unsaveable). So the outcome
+ * matches the visible ball↔keeper interaction: ball meets keeper ⇒ save, ball
+ * beats keeper ⇒ goal. A small seeded band at the edge keeps borderline shots
+ * lively (and replayable online).
  *
  * It imports NO Phaser and works in normalised goal coordinates (0..1 across the
  * goal mouth), so it is resolution-independent, trivially testable, and — given
@@ -39,8 +41,8 @@ export interface PenaltyResult {
   outcome: Outcome;
   saved: boolean;
   scored: boolean;
-  keeperNorm: { x: number; y: number }; // where the keeper dives, normalised (drives the visual)
-  timingQuality: number; // 0..1
+  keeperNorm: { x: number; y: number }; // hands position at ball arrival, normalised (drives the visual)
+  timingQuality: number; // dive progress 0..1 (1 = hands fully reached the target)
   reachMargin: number; // ellipse value (≤1 inside reach) — for debug
 }
 
@@ -69,29 +71,45 @@ function zoneCenterNorm(zone: ZoneId): { x: number; y: number } {
 /**
  * Compute the outcome of one penalty. Pure: same inputs + seed ⇒ same result.
  *
- * The keeper dives to its guessed zone (keeperNorm). Its reach is an ellipse
- * (reachX × reachY) scaled down by poor timing and by shot power. The ball is
- * SAVED if its landing sits inside that ellipse; a thin `margin` band at the
- * edge is decided by a seeded coin-flip weighted by how close it is.
+ * REACH-BASED model (Phase 2 — "build exactly this"). The keeper's hands start at
+ * goal centre and travel toward the committed dive target. `diveProgress` is how
+ * far they get by the moment the ball ARRIVES: an early/on-time commit reaches the
+ * target (1); diving late leaves the hands near centre (→0). The ball is SAVED if
+ * it lands within the keeper's reach ellipse around the hands' ARRIVAL position; a
+ * thin `margin` band at the edge is a seeded tie-break.
+ *
+ * This yields the three Phase-2 behaviours: (a) a correct, well-timed dive saves
+ * most of that side but NOT the extreme corner (reach is tuned smaller than the
+ * corner distance); (b) a keeper who doesn't commit / dives late keeps a small
+ * central reach, so dead-centre is saveable and a corner is not; (c) diving the
+ * wrong way OR too late leaves the goal open — a save must be a READ, not a reaction.
  */
 export function resolvePenalty(taker: TakerInput, keeper: KeeperInput, seed: number): PenaltyResult {
   const R = CONFIG.RESOLUTION;
-  const keeperNorm = zoneCenterNorm(keeper.diveZone);
+  const center = { x: 0.5, y: 0.5 }; // resting hands position (goal centre)
+  const diveTarget = zoneCenterNorm(keeper.diveZone);
 
   const ln = taker.landingNorm;
   const offGoal = ln.x < 0 || ln.x > 1 || ln.y < 0 || ln.y > 1;
   if (offGoal) {
-    return { outcome: 'miss', saved: false, scored: false, keeperNorm, timingQuality: 0, reachMargin: Infinity };
+    return { outcome: 'miss', saved: false, scored: false, keeperNorm: center, timingQuality: 0, reachMargin: Infinity };
   }
 
-  const timingQuality = clamp(1 - Math.abs(keeper.diveTiming) / R.timingWindowMs, 0, 1);
-  // Effective reach: full when well-timed and the shot is soft; shrinks otherwise.
-  const reachScale = (R.timingFloor + (1 - R.timingFloor) * timingQuality) * (1 - taker.power * R.powerReachPenalty);
+  // How far the hands have travelled toward the dive target by ball arrival.
+  // Early/on-time (diveTiming ≤ 0) = fully there; later = progressively less.
+  const diveProgress = clamp(1 - Math.max(0, keeper.diveTiming) / R.diveLateWindowMs, 0, 1);
+  const hands = {
+    x: center.x + (diveTarget.x - center.x) * diveProgress,
+    y: center.y + (diveTarget.y - center.y) * diveProgress,
+  };
+
+  // A hard shot is fractionally harder to reach/hold (shrinks the reach a touch).
+  const reachScale = 1 - taker.power * R.powerReachPenalty;
   const rx = Math.max(1e-4, R.reachX * reachScale);
   const ry = Math.max(1e-4, R.reachY * reachScale);
 
-  const dx = (ln.x - keeperNorm.x) / rx;
-  const dy = (ln.y - keeperNorm.y) / ry;
+  const dx = (ln.x - hands.x) / rx;
+  const dy = (ln.y - hands.y) / ry;
   const ellipse = dx * dx + dy * dy; // ≤1 ⇒ inside reach
 
   let saved: boolean;
@@ -109,8 +127,8 @@ export function resolvePenalty(taker: TakerInput, keeper: KeeperInput, seed: num
     outcome: saved ? 'save' : 'goal',
     saved,
     scored: !saved,
-    keeperNorm,
-    timingQuality,
+    keeperNorm: hands, // where the hands are judged = the visual dive endpoint
+    timingQuality: diveProgress,
     reachMargin: ellipse,
   };
 }

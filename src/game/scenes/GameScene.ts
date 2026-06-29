@@ -133,6 +133,9 @@ export class GameScene extends Phaser.Scene {
         resolvePenalty,
         getState: () => ({ mode: this.mode, state: this.state, diveCaptured: this.diveCaptured }),
         setMode: (m: GameMode) => this.setMode(m),
+        setKeeperDifficulty: (d: number) => {
+          this.cpu.difficulty = d;
+        },
       };
     }
 
@@ -432,9 +435,9 @@ export class GameScene extends Phaser.Scene {
       if (this.diveCaptured) {
         this.human.submitDive(this.diveCaptured.zone, this.diveCaptured.timing);
       } else {
-        // Frozen keeper: a centre stance with the worst possible timing, so only a
-        // shot hit straight at them is stopped (PRD §6 — react or concede).
-        this.human.submitDive('BM', CONFIG.RESOLUTION.timingWindowMs * 10);
+        // Frozen keeper: a centre stance, dived so late the hands never leave
+        // centre — only a shot hit straight at them is stopped (react or concede).
+        this.human.submitDive('BM', CONFIG.RESOLUTION.diveLateWindowMs * 10);
       }
     });
   }

@@ -246,19 +246,21 @@ const FLIGHT = {
 // CPU_KEEPER (PRD §5) — opponent in solo Taker mode. (Not wired until M4.)
 // ─────────────────────────────────────────────────────────────────────────────
 const CPU_KEEPER = {
-  difficulty: 0.5, // single master knob (PRD §5). Keep beatable — err low.
+  // Difficulty is the simple parameter to change (Phase 2). 0..1 master knob —
+  // presets: EASY ≈ 0.25 (large directional error, often dives wrong), MEDIUM ≈
+  // 0.5 (reads the side often), HARD ≈ 0.85 (accurate read, beaten only by true
+  // corners thanks to the reach limit). Difficulty is DIRECTIONAL, not timing —
+  // the CPU commits on time (it reaches its guess); corners + wrong reads beat it.
+  difficulty: 0.5,
   // Zone-guess accuracy is lerp(min,max) by difficulty (chance of reading the
   // right column). Kept modest so well-placed corners beat the keeper.
-  guessAccuracyMin: 0.25,
-  guessAccuracyMax: 0.8,
-  // Dive timing spread (× timingWindowMs) is lerp(max,min) by difficulty — a
-  // better keeper times the dive tighter. Kept modest so a right-direction guess
-  // mostly translates into a save.
-  timingSpreadMin: 0.2,
-  timingSpreadMax: 0.9,
+  guessAccuracyMin: 0.25, // column (left/right) read accuracy, lerp by difficulty
+  guessAccuracyMax: 0.85,
+  rowAccuracyMin: 0.5, // height (high/low) read accuracy, lerp by difficulty — at
+  rowAccuracyMax: 0.9, //  easy it's a coin flip; at hard it usually reads height too
+  timingJitterMs: 45, // small ± noise on the CPU's (on-time) commit, so it isn't robotic
   reactionDelay: 160, // ms after the strike before the dive animation starts
   diveDuration: 420, // ms for the dive animation
-  reach: 0.92, // how far toward the zone the keeper visibly reaches (0..1)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,18 +317,20 @@ const KEEPER = {
 // wired until Milestone 4.) maxSaveChance < 1 keeps perfect corners unsaveable.
 // ─────────────────────────────────────────────────────────────────────────────
 const RESOLUTION = {
-  // GEOMETRIC save model: the keeper saves when the ball lands within its dive
-  // reach (an ellipse around where it actually dives). This makes the outcome
-  // match the visible ball↔keeper interaction instead of a hidden dice roll.
-  // Reach is in NORMALISED goal coords (fraction of goal width / height).
-  reachX: 0.34, // horizontal reach around the dive point
-  reachY: 0.4, // vertical reach (a touch more — rows are tall)
-  timingWindowMs: 140, // dive-timing tolerance; worse timing → less reach
-  timingFloor: 0.72, // reach kept even with the worst timing (0..1). High so a
-  //  correct DIRECTION guess reliably saves — beatability comes from the keeper
-  //  guessing the wrong way, not from fumbled timing (owner feel note).
-  powerReachPenalty: 0.3, // hard shots shrink reach by up to this (× power)
-  margin: 0.3, // soft save/goal band at the very edge of reach (seeded tie-break)
+  // REACH-BASED save model (Phase 2). The keeper's hands travel from goal centre
+  // toward the dive target; the ball is saved if it lands within this reach
+  // ellipse of where the hands have reached when it arrives. Reach is in
+  // NORMALISED goal coords (fraction of goal width / height). It is an ellipse
+  // because the goal is wide — these values ≈ a real circular reach, and are
+  // tuned SMALLER than the corner distance so the extreme corners are unsaveable
+  // (a correct dive still saves most of that side). The PRIMARY tuning knobs.
+  reachX: 0.2, // horizontal reach radius around the hands
+  reachY: 0.3, // vertical reach radius around the hands
+  diveLateWindowMs: 240, // how late a dive can be before the hands never leave
+  //  centre (0 = perfect → hands fully reach the target; ≥ this late → stay centre).
+  //  This is what makes a save a READ, not a reaction (Phase 2 commit-timing).
+  powerReachPenalty: 0.2, // a hard shot shrinks reach by up to this (× power)
+  margin: 0.18, // soft save/goal band at the very edge of reach (seeded tie-break)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
