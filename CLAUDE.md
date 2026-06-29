@@ -3,9 +3,13 @@
 Project guide for AI sessions. Keep it short. Read `penalty-shootout-PRD-v2.md` for the full spec — it is the source of truth.
 
 ## What this is
-A mobile-first PWA penalty-shootout game that is **responsive in both orientations** (owner decision 2026-06-27, replacing the PRD's original portrait-only lock). Landscape is the primary/best-looking view (a real goal is wide); portrait also works. The whole game lives or dies on **swipe feel**. Ships in two stages:
+A mobile-first PWA penalty-shootout game that is **responsive in both orientations**. **Portrait is the primary/best-looking view** (one-handed phone play — Phase 0 of the new phased plan, 2026-06-29, overriding the earlier landscape-primary call); landscape still works. The whole game lives or dies on **swipe feel**. Ships in two stages:
 - **Stage 1 (Milestones 1–7):** complete single-player game, both modes vs CPU.
 - **Stage 2 (Milestone 8):** online 2-player over room codes, added on top with no rewrite.
+
+## Plan re-review (owner, 2026-06-29) — now tracking a phased plan
+The owner is re-reviewing the build against a fresh **phase-wise** plan (inspired by existing apps), replacing the milestone framing going forward. Rule: **on any clash, the new plan wins.** Phases arrive one at a time. Decisions locked so far:
+- **Phase 0 (scaffold & static scene):** already satisfied by M1–M5. Reconciliation decisions — **keep TypeScript** (not the plan's "vanilla JS"; no rewrite, builds/deploys identically); **keep the keeper's-eye camera** for Keeper mode (Taker stays behind-the-taker — the plan's "behind-the-taker everywhere" does NOT override the recent keeper's-eye decision); **portrait-primary** (both orientations supported).
 
 ## Stack (decided — do not substitute without asking the owner)
 - **Phaser 3.x** (pinned to 3.90.0). **NOT Phaser 4.**

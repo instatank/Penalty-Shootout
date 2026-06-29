@@ -16,10 +16,10 @@
 // and Phaser's Scale.FIT scales it to the real screen. Portrait 9:16.
 // ─────────────────────────────────────────────────────────────────────────────
 const GAME = {
-  // LANDSCAPE (owner decision 2026-06-27, overrides the PRD's original portrait
-  // lock): a real goal is wide (~3:1), so a sideways frame fits it naturally and
-  // removes the portrait "dead space". Authored against 1280x720; Scale.FIT
-  // scales this design space to the device while preserving aspect.
+  // PORTRAIT-PRIMARY, responsive to both orientations (Phase 0, 2026-06-29). The
+  // real layout is computed live from the screen size in game/layout.ts (Scale.
+  // RESIZE — no fixed design-space pixels); these width/height are only the
+  // initial canvas size before the first resize fires.
   width: 1280,
   height: 720,
   backgroundColor: '#0d1b2a', // dark stadium tone (also fills any letterbox bars)
