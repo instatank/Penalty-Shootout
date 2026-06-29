@@ -26,7 +26,7 @@ These make later milestones cheap. Get them right; do not shortcut them.
 
 1. **One `src/config.ts`** holds every feel/tuning constant as a plain typed object. **No magic numbers anywhere else.** Grouped + commented by system (PRD §11).
 2. **Toggleable debug overlay** (`src/ui/DebugOverlay.ts`) prints live derived values (swipe vector, power, curve, errorRadius, target/landing zone, and later keeper zone + timing + save/goal). Mandatory — it is how the owner tunes feel. Toggle key + on-screen button.
-3. **Input uses Pointer Events** with `setPointerCapture()` and `touch-action: none` on the canvas. Sample the swipe path as `{x,y,t}` points. Power = release velocity over the last ~80ms (`velocityWindowMs`), **not** whole-gesture average. (PRD §4.)
+3. **Input uses Pointer Events** + `touch-action: none` on the canvas (index.html). Gesture STARTS on the canvas, is TRACKED on the `window`, and does **NOT** use `setPointerCapture` or `preventDefault` — both starve Phaser's own input and silently kill every on-screen button (learned the hard way in Phase 3; see the bugfix note below). Sample the swipe path as `{x,y,t}` points. Power = release velocity over the last ~80ms (`velocityWindowMs`), **not** whole-gesture average. (PRD §4.)
 4. **`resolvePenalty()` is one pure, deterministic function** (PRD §7). Both taker and keeper actions flow through a shared **`InputProvider` interface** (PRD §8). The game loop must **never** branch on "CPU vs human." This is what lets online drop in later without a rewrite.
 
 ## File structure
@@ -38,17 +38,18 @@ src/
   main.ts               # boots the Phaser game
   config.ts             # RULE 1 — all tuning constants, grouped by system
   input/
-    SwipeInput.ts       # RULE 3 — Pointer Events + capture + {x,y,t} sampling; deriveSwipe()
+    SwipeInput.ts       # RULE 3 — Pointer Events (canvas down, window move/up; NO capture/preventDefault); deriveSwipe()
     providers.ts        # RULE 4 — InputProvider interface + LocalHumanProvider + CpuProvider
   game/
     main.ts             # Phaser.Game config (Scale.RESIZE, scene list)
     viewport.ts         # robust full-screen sizing across orientation changes
-    layout.ts           # responsive layout: computeLayout(w,h) -> pixel positions
-    aim.ts              # swipe → target/zone; finalizeShot() builds the TakerInput (seeded landing)
+    layout.ts           # responsive layout: computeLayout(w,h,view) -> pixel positions (taker + keeper'-eye cameras)
+    aim.ts              # swipe → target/zone; scatterRadius/landShot/finalizeShot/cpuShot/computeDive/shotOutcome
     resolve.ts          # RULE 4 — pure deterministic resolvePenalty() + seededRandom (no Phaser)
+    shootout.ts         # Phase 3 — pure best-of-5 shootout state machine (clinch/sudden-death); no Phaser
     zones.ts            # 3x2 zone grid: ids, rects, centers (take goal rect; shared by render + resolve)
     scenes/
-      GameScene.ts      # the pitch + provider-driven kick loop + keeper dive + outcome
+      GameScene.ts      # the pitch + session controller (runShootout/runPractice) + kick loop + scoreboard/end screen
   audio/
     Sfx.ts              # procedural Web Audio crowd cheer/groan (no asset files)
   ui/
@@ -61,8 +62,8 @@ src/
 - `npm run preview` — serve the production build locally.
 
 ## Process rules
-- Follow PRD §13 build order **exactly**. Build ONE milestone at a time.
-- **Stop at every ⏸ checkpoint** and ask the owner to playtest before continuing.
+- **We now track the owner's phased plan** (see "Plan re-review" above), NOT the old PRD milestone order. The owner sends ONE phase at a time; build only that phase. **On any clash with the PRD/earlier work, the new plan wins** — but flag genuine conflicts and surface anything destructive before doing it.
+- **Stop at every ⏸ checkpoint** and let the owner playtest before continuing. Update this file + HANDOFF.md when a phase lands.
 - Owner is non-technical: clear, well-commented code; explain decisions in plain language.
 
 ## Current status
@@ -89,8 +90,9 @@ src/
 - **Sound effects are placeholder** (procedural Web Audio). Owner wants them replaced with better/real crowd samples later. Toggle: CONFIG.SOUND.
 - iOS Safari has **no Vibration API** — haptics only fire on Android. iOS haptic is a possible M7 experiment (fragile switch-element hack).
 - Vercel hosting: owner is connecting the GitHub repo themselves (auto-deploys on push to the working branch). vercel.json is set.
-- Dev-only test hooks: GameScene exposes `window.__penalty.resolvePenalty`, `window.__penalty.getState()` (live {mode,state,diveCaptured}), `window.__penalty.setMode(m)`, plus `window.__lastResult`/`__lastAim`/`__lastTaker` under import.meta.env.DEV (stripped from prod) — handy for headless verification. Headless caveat: Phaser timers run on the rAF/game clock (throttled without a display) while swipe timestamps are wall-clock, so dive-timing numbers look off headless but align on-device.
+- Dev-only test hooks (under import.meta.env.DEV, stripped from prod): `window.__penalty` = { resolvePenalty, createShootout, recordKick, getState() → {mode,state,diveCaptured}, getShootout(), setMode(m), setKeeperDifficulty(0..1), forceEnd() }, plus `window.__lastResult`/`__lastAim`/`__lastTaker`. Handy for headless verification.
+- **Headless test gotchas (important):** (1) Phaser **GameObject buttons + scene input only fire for REAL/CDP events — use Playwright `page.mouse.*`, NOT `dispatchEvent`.** (2) Our SwipeInput uses raw window listeners, so **swipes** are best driven with `dispatchEvent` PointerEvents on the canvas. (3) Phaser timers run on the rAF/game clock (throttled without a display) while swipe timestamps are wall-clock, so dive-timing numbers look off headless but align on-device — don't "fix" timing based on headless reads. (4) Use the pre-installed Chromium at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome` with `playwright-core`.
 
-## Milestone 6 — Sessions + scoring + practice (NEXT). PRD §9 + §13.6
-M5 (Keeper mode) is done. Next: a 5-kick session per mode (Taker counts goals, Keeper counts saves), an end screen with result + restart, and a Practice mode (unlimited, no score). This is where the minimal MODE toggle grows into the real Splash → Mode-select (Take / Save / Practice) menu (§12). Do NOT change resolvePenalty or the loop's provider-agnostic shape.
-- ⏸ As always: stop at the checkpoint for owner playtest. Update this file when done.
+## NEXT — Phase 4 (awaiting the owner's phase text). Expected: KEEPER-mode shootout.
+Phases 0–3 are done (Taker mode is a complete, shippable game). Keeper mode EXISTS but currently runs as **free practice** (`runPractice`, no score). The owner referenced "Keeper mode (Phase 4)" and "multiplayer (Phase 6)", so Phase 4 will almost certainly turn Keeper mode into a scored session reusing the **same `game/shootout.ts` machine** (Keeper counts SAVES; the player keeps goal for their turns, the AI takes for the opponent's turns). **Wait for the owner to paste the actual Phase 4 spec before building** — the new plan wins on clashes. Do NOT change `resolvePenalty`, the provider-agnostic kick loop, or re-add pointer capture/preventDefault.
+- ⏸ As always: build only Phase 4, then stop for the owner to playtest. Update this file + HANDOFF.md when done.

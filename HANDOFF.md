@@ -1,88 +1,122 @@
-# Handoff — start here for Milestone 6 (Sessions + scoring + practice)
+# Handoff — continue the Penalty Shootout build (next: Phase 4)
 
-Paste the **prompt block** below into a fresh Claude Code session to continue the
-build. Everything else in this file is context for that session.
+Paste the **Prompt block** below into a fresh Claude Code session. Everything under
+it is context for that session. **Source of truth order:** the owner's phased plan
+(sent one phase at a time) → `CLAUDE.md` (living status + locked decisions) →
+`penalty-shootout-PRD-v2.md` (original spec; superseded wherever the phased plan
+clashes).
 
 ---
 
 ## Prompt to paste
 
 > We are continuing the Penalty Shootout build. **Read `CLAUDE.md` and
-> `penalty-shootout-PRD-v2.md` in full before writing any code** — CLAUDE.md has
-> the current status, the architecture rules, and a "Milestone 6" section. The PRD
-> is the source of truth.
+> `penalty-shootout-PRD-v2.md` in full before writing any code.** CLAUDE.md has the
+> current status, the non-negotiable architecture rules, and the locked decisions
+> from the owner's phased plan.
 >
-> Milestones 1–5 are **done, playtested, and pushed**: a complete single-player
-> game with BOTH modes vs CPU (Taker and Keeper), a unified deterministic
-> `resolvePenalty()`, the `InputProvider` abstraction (loop never branches on
-> CPU-vs-human), and aesthetics. We are now starting **Milestone 6 — sessions +
-> scoring + practice** (PRD §9 / §13.6): a 5-kick session per mode (Taker counts
-> goals, Keeper counts saves), an end screen with result + restart, and an
-> unlimited Practice mode. This is where the minimal MODE toggle becomes the real
-> Splash → Mode-select (Take / Save / Practice) menu (§12).
+> We are now tracking a **phase-wise plan** (the owner sends ONE phase at a time);
+> it replaces the old PRD milestone order. **On any clash with the PRD or earlier
+> work, the new plan wins** — but flag genuine conflicts and confirm anything
+> destructive before doing it. Phases 0–3 are DONE: Taker mode is a complete,
+> shippable single-player game (drag-to-shoot, AI keeper, best-of-5 shootout with
+> early-clinch / sudden-death / win-lose / play-again), and Keeper mode exists as
+> free practice. **Wait for me to paste the Phase 4 spec, then build ONLY that
+> phase and stop at the ⏸ checkpoint for me to playtest.** Update `CLAUDE.md` and
+> `HANDOFF.md` when the phase lands.
 >
-> Honor the four non-negotiable architecture rules (one `config.ts`; mandatory
-> debug overlay; Pointer Events input; pure deterministic `resolvePenalty()` +
-> `InputProvider` interface with the loop NEVER branching on CPU-vs-human). Do
-> **not** modify `resolvePenalty()` or the loop's provider-agnostic shape. Build
-> ONLY Milestone 6, then **stop at the ⏸ checkpoint** for the owner to playtest.
-> Update `CLAUDE.md` when done.
+> Honor the four architecture rules (one `config.ts`; mandatory toggleable debug
+> overlay; Pointer Events input; pure deterministic `resolvePenalty()` +
+> `InputProvider` interface, loop NEVER branching on CPU-vs-human). Do NOT change
+> `resolvePenalty` or the loop's provider-agnostic shape, and do NOT re-add
+> `setPointerCapture`/`preventDefault` to SwipeInput (they break every on-screen
+> button — see CLAUDE.md).
 >
-> I'm a non-technical owner: write clear, well-commented code and explain
-> decisions plainly. Develop on the branch `claude/penalty-shootout-setup-9bs643`,
-> and commit + push each working step to that branch.
+> I'm a non-technical owner: write clear, well-commented code and explain decisions
+> plainly. Develop on branch `claude/penalty-shootout-setup-9bs643`; commit + push
+> each working step there. Don't open a PR unless I ask.
 
 ---
 
-## Where things stand
-- **Stack:** Phaser 3.90.0 (not 4) + TypeScript + Vite. Responsive (Scale.RESIZE),
-  works in portrait and landscape (landscape is primary). Vercel-hosted PWA later.
-- **Done:** M1 scaffold/static scene, M2 swipe input + debug overlay, M3 ball
-  flight, M4 Taker mode (CPU keeper) with a unified **geometric** `resolvePenalty`,
-  **M5 Keeper mode** (CPU taker + tell + human dive/timing, in a behind-the-keeper
-  camera where the ball grows toward you — `computeLayout(..,'keeper')`), plus aesthetics
-  (Trionda ball, net shake on goal, celebratory banner, procedural crowd SFX).
-  All feel values are in `src/config.ts`.
+## Where things stand (Phases 0–3 done)
+- **Stack:** Phaser 3.90.0 (NOT 4) + TypeScript + Vite. Responsive (Scale.RESIZE),
+  **portrait-primary**, landscape also works. Vercel-hosted; PWA + Firebase are later.
+- **Phase 0** — scaffold/static scene: satisfied. Decisions: keep TypeScript (not
+  the plan's "vanilla JS"), portrait-primary, keep the keeper's-eye camera.
+- **Phase 1** — taker shot: drag-to-aim + live aim indicator + live **power meter**
+  + threshold **power/accuracy tradeoff** (`aim.scatterRadius`) + power→ball-speed +
+  on-target/wide/over outcome. Power = release **velocity**.
+- **Phase 2** — resolution + keeper: `resolvePenalty` is a pure **hands-at-arrival
+  reach model** (hands travel centre→dive-target by `diveProgress`; save if ball
+  within the reach ellipse of the hands' arrival point; extreme corners unsaveable;
+  resting/late keeper covers centre). AI keeper difficulty = one directional knob.
+- **Phase 3** — full **Taker-mode shootout vs AI**: pure `game/shootout.ts`
+  (best-of-5 alternating, early clinch, sudden death, winner) drives a GameScene
+  **session controller** (Taker = `runShootout`, Keeper = `runPractice`). Persistent
+  scoreboard, Win/Lose end screen, Play Again (tap the end screen). Difficulty
+  selector (EASY/MED/HARD). **Plus a critical input bugfix** — see below.
+- Aesthetics carried through: Trionda ball, net shake on goal, celebratory banner,
+  procedural crowd SFX.
 - **Branch:** `claude/penalty-shootout-setup-9bs643` (develop + push here).
+- **Every phase is at an owner-playtest ⏸ checkpoint** (not yet signed off on device).
 
-## Milestone 6 task (summary — full detail in CLAUDE.md + PRD §9/§12)
-1. A **session = 5 kicks** in the chosen mode. Taker: count goals. Keeper: count
-   saves. End screen shows the result and offers restart / back to menu.
-2. **Practice mode:** unlimited kicks, no score (used for feel-tuning / warm-up).
-3. Replace the minimal **MODE: TAKE/SAVE** toggle (GameScene) with a real
-   **Splash → Mode-select (Take / Save / Practice)** flow (§12). Keep chrome
-   minimal — the pitch/goal/ball are the screen; controls in the lower thumb zone.
-4. Do NOT touch `resolvePenalty()` or the loop's provider-agnostic shape. Mode is
-   already just a provider swap (GameScene.setMode) — build scoring/session state
-   around the existing loop, not inside it.
+## Architecture you'll reuse (don't relearn the hard way)
+- **`game/resolve.ts` — the keystone.** Pure, deterministic, no Phaser. Works in
+  normalised goal coords. Do NOT change its shape (online replay depends on it).
+- **`input/providers.ts` — `InputProvider`.** `LocalHumanProvider` (human, taker or
+  keeper) + `CpuProvider` (AI, taker or keeper). The kick loop pulls inputs through
+  these and NEVER branches on CPU-vs-human. **Mode = a provider swap** (GameScene.setMode).
+- **`game/shootout.ts` — pure score machine.** `createShootout()/recordKick()`;
+  tracks per-side {taken, scored, results[]}, phase regulation/suddenDeath/done,
+  `next` side, winner. **Reuse this for Phase 4 (Keeper) and Phase 6 (online).**
+- **GameScene session controller.** `startSession()` picks `runShootout` (Taker) or
+  `runPractice` (Keeper) by `this.mode`; a `session` counter cleanly stops/restarts
+  loops on mode-switch / play-again. `playKick()` = one provider-driven kick (shared).
+  `playOpponentShot()` = simulated AI opponent kick (probability-based, Taker mode).
+- **Dual camera in `game/layout.ts`:** `computeLayout(w,h,'taker'|'keeper')`. Keeper
+  view = behind-the-keeper, ball grows toward you; the near plane IS the `goal` rect
+  handed to resolve, so all coord math is reused — only pixels move.
+- **`result.scored`** = player won in Taker mode; **`result.saved`** = player won in
+  Keeper mode. `showOutcome`/`announceOutcome` already flip the celebration by mode.
 
-## Key code facts to reuse (don't relearn the hard way)
-- The kick loop (`GameScene.runKickLoop`) is mode-agnostic: it pulls taker +
-  keeper inputs through `this.takerProvider` / `this.keeperProvider` and resolves.
-  Switching mode = swapping which concrete provider (`this.human` / `this.cpu`)
-  fills each role. The loop continues across switches via `epoch` + `human.cancel()`.
-- `result.saved` = the player succeeded in **Keeper** mode; `result.scored` = the
-  player succeeded in **Taker** mode. `showOutcome` already flips cheer/celebration
-  by mode (`playerWon`) — reuse that signal for scoring.
-- Outcome banner uses `outcomeText`; debug overlay via `this.debug.setLines(...)`.
+## ⚠️ Input: do NOT re-add capture/preventDefault
+`SwipeInput` must keep: gesture starts on the canvas, tracked on the **window**, with
+**no `setPointerCapture` and no `preventDefault`** (scroll is blocked by
+`touch-action:none` in index.html). Capture/preventDefault silently starve Phaser's
+own input and kill every on-screen button (DBG/MODE/difficulty/Play Again). This was
+a real Phase-3 bug; keep the fix.
 
-## How to verify (this has worked well)
-- `npm install` first (fresh container), then `npm run build` must be clean
-  (it runs `tsc --noEmit` then Vite).
-- Headless check with the pre-installed Chromium: install `playwright-core` in a
-  scratch dir and launch with `executablePath:
-  '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'`. Drive the game by
-  dispatching PointerEvents on `#game-container canvas` (with real awaited gaps),
-  screenshot, and read the DEV hooks (`window.__penalty.getState/setMode`,
-  `window.__lastResult`, `window.__lastTaker`, `window.__lastAim`) — DEV only.
-  Headless caveat: Phaser timers run on the throttled rAF/game clock while swipe
-  timestamps are wall-clock, so dive-timing reads off headless but aligns on-device.
-- Stop at the ⏸ checkpoint and hand to the owner to playtest on their phone (the
-  Vercel link auto-updates on push).
+## How to verify (this workflow works well)
+- Fresh container: `npm install` first. Then `npm run build` (runs `tsc --noEmit`
+  then Vite) must be clean.
+- Headless: `npm run dev` (port 8080), drive with `playwright-core` + the
+  pre-installed Chromium at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
+  (`--no-sandbox`). Read DEV hooks: `window.__penalty` (resolvePenalty, createShootout,
+  recordKick, getState, getShootout, setMode, setKeeperDifficulty, forceEnd) and
+  `window.__lastResult/__lastAim/__lastTaker`.
+- **Test gotchas:** Phaser **buttons + scene input fire only for `page.mouse.*`
+  (CDP), NOT `dispatchEvent`**; **swipes** are best driven with `dispatchEvent`
+  PointerEvents on the canvas. Phaser timers are throttled headless (game clock) vs
+  wall-clock swipe timestamps — dive-timing reads look off headless but align
+  on-device; don't retune timing from headless numbers. Restart the dev server after
+  edits (HMR doesn't re-run a Phaser scene's `create()`; a fresh `goto` does).
+- Stop at the ⏸ checkpoint; the owner playtests on their phone (Vercel auto-deploys
+  on push to the working branch).
 
-## Known follow-ups (not M6)
-- Replace placeholder procedural SFX with real crowd samples (owner request).
-- iOS has no Web Vibration API (haptics Android-only) — possible M7 experiment.
-- Keeper-mode timing bites softly (shared CONFIG.RESOLUTION.timingFloor). If the
-  owner wants timing to matter more, lower timingFloor / shorten CPU_TAKER.flightTime
-  at playtest (both also affect Taker feel).
+## What's next — Phase 4 (expected: Keeper-mode shootout)
+Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a
+**scored session reusing `game/shootout.ts`** (Keeper counts SAVES; player keeps goal
+on their turns, AI takes on the opponent's turns) with the same scoreboard / end
+screen / play-again. The real Splash → Mode-select (Take / Save / Practice) menu is
+also still pending. **Wait for the owner's actual Phase 4 text before building.**
+
+## Known follow-ups / open notes (carry forward)
+- SFX are placeholder procedural Web Audio (CONFIG.SOUND); owner wants real crowd
+  samples later.
+- iOS Safari has no Vibration API (haptics Android-only); possible later experiment.
+- Keeper-mode timing now bites (Phase 2 model); `RESOLUTION.diveLateWindowMs` is the
+  knob if the owner wants it more/less forgiving (shared with Taker — judge together).
+- Taker `SESSION.opponentScoreChance` (0.68) is the AI-opponent strength dial for the
+  shootout; tune for a fair, winnable game.
+- The debug overlay (top-left) can overlap the centered scoreboard on a narrow phone;
+  it's a dev tool — tap DBG to hide it. Not worth special-casing unless the owner asks.
