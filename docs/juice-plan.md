@@ -199,6 +199,22 @@ Stop at every ⏸ checkpoint for the owner to playtest before continuing.**
 
 ---
 
+## Post-playtest tuning (owner feedback, round 1)
+First on-device playtest of the full juice stack surfaced three over-done items;
+fixed (all in `CONFIG.JUICE`, no structural change):
+- **Haze** → the camera **bloom** blooms the WHOLE bright frame (pitch + white goal),
+  not just floodlights — it read as a hazy wash. `grade.bloomStrength = 0` (off);
+  kept only a faint vignette + near-neutral grade. Floodlight shapes off too (they
+  only existed as a bloom source). A later pass can bloom JUST a dedicated floodlight
+  object via its own FX.
+- **Camera "absurd / cut off / not full-screen"** → the old beats PANNED toward a
+  focus point (cropped the frame) and zoomed on every aim/strike (jittery). Now
+  **zoom-only, centred, goal/save only**, gentle (`goalZoom 1.05 / saveZoom 1.045`),
+  and `resetCamera(0)` at create guarantees a full-screen start. Centred zoom can't
+  crop. Verified headless: rests at zoom 1 / scroll 0; peak 1.05; scroll never moves.
+- **"Auto-playing" feel** → the slow-mo **replay** re-ran the kick by itself.
+  `replay.enabled = false` by default (still fully wired to re-enable later).
+
 ## TIER 3 — The finish (items 8–10). ✅ BUILT — ⏸ awaiting owner playtest.
 > Status (2026-06-29): all three items implemented, build clean, headless smoke
 > green (replay fires on corner goals + keeper saves, ends naturally AND is

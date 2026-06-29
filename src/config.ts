@@ -422,18 +422,18 @@ const JUICE = {
   },
 
   // ── 3. Dynamic camera ────────────────────────────────────────────────────
-  // Subtle, always-eased pushes that react differently to aim / strike / goal /
-  // save, then re-frame to neutral. Pure cameras.main work (pan + zoomTo).
+  // ZOOM-ONLY, centred pulses on a goal / save, then ease back to neutral. We do
+  // NOT pan toward a focus point (panning shoved content off-frame and read as a
+  // lurching camera) and we do NOT zoom on aim/strike (too frequent / jittery).
+  // Centred zoom can never crop asymmetrically, so the frame always stays whole.
   camera: {
     enabled: true,
-    aimZoom: 1.04, // gentle push-in while aiming / before a CPU strike
-    strikeZoom: 1.08, // quick punch toward the ball at the moment of the strike
-    goalZoom: 1.14, // celebration framing on a goal
-    saveZoom: 1.12, // framing that favours the keeper on a save
-    focusStrength: 0.32, // how far the camera recenters toward the focus point (0..1)
-    moveMs: 240, // pan/zoom duration for a beat
-    returnMs: 420, // ease back to the neutral penalty view between kicks
-    holdMs: 650, // hold the goal/save framing before returning
+    aimZoom: 1.0, // no push-in while aiming (kept for shape; 1.0 = no-op)
+    strikeZoom: 1.0, // no zoom on the strike (1.0 = no-op)
+    goalZoom: 1.05, // a gentle celebratory push-in on a goal
+    saveZoom: 1.045, // a gentle push-in on a save
+    moveMs: 260, // zoom-in duration for a beat
+    returnMs: 380, // ease back to the neutral (1.0) view between kicks
     ease: 'Sine.easeInOut',
   },
 
@@ -490,10 +490,13 @@ const JUICE = {
   // After a corner goal / a save, re-simulate the resolved shot at a slowed flight
   // speed from a tight, dramatic camera. Tap anywhere to skip. Presentation-only —
   // it re-runs the SAME deterministic flight, never re-resolves.
+  // Disabled by default: re-running the kick by itself read as the game "auto-
+  // playing" and made pacing inconsistent. Left here, fully wired, to re-enable
+  // once the rest of the feel is dialled in.
   replay: {
-    enabled: true,
+    enabled: false,
     slowFactor: 2.6, // flight-duration multiplier (higher = slower replay)
-    zoom: 1.5, // dramatic push-in for the replay camera
+    zoom: 1.18, // gentle push-in for the replay camera (zoom-only, no pan)
     inMs: 520, // ease-in time for the replay framing + label
     holdMs: 420, // hold on the final frame before returning to play
     onCornerGoals: true, // replay a taker goal struck into a corner
@@ -504,15 +507,19 @@ const JUICE = {
   // WebGL-only camera FX (vignette + restrained floodlight bloom + a subtle colour
   // grade) for one cohesive look. Gracefully no-ops on the Canvas renderer. Keep
   // bloom LOW — heavy bloom reads cheap.
+  // NOTE: camera bloom blooms the WHOLE bright frame (the pitch + white goal), not
+  // just the floodlights — that read as a hazy wash. So bloom is OFF; we keep only
+  // a very subtle vignette + a near-neutral grade. (A future pass can bloom JUST a
+  // dedicated floodlight object via its own FX instead of the whole camera.)
   grade: {
     enabled: true,
-    vignetteStrength: 0.45, // edge darkening (0 = none)
-    vignetteRadius: 0.78, // how far in the vignette reaches (1 = edges only)
-    bloomStrength: 0.65, // floodlight glow strength — restrained on purpose
-    bloomBlur: 1.1, // bloom blur radius
-    saturate: 1.06, // colour-grade saturation (1 = unchanged)
-    brightness: 1.02, // colour-grade brightness (1 = unchanged)
-    floodlights: true, // draw bright light banks for the bloom to sit on
+    vignetteStrength: 0.22, // gentle edge darkening only (no haze)
+    vignetteRadius: 0.9, // reaches only the very corners
+    bloomStrength: 0.0, // OFF — full-frame bloom hazed everything
+    bloomBlur: 1.1, // (unused while bloomStrength = 0)
+    saturate: 1.03, // a whisper more colour
+    brightness: 1.0, // unchanged
+    floodlights: false, // off — they only existed to give the (now-removed) bloom a source
   },
 
   // ── 10. UI / transition juice (Tier 3) ───────────────────────────────────

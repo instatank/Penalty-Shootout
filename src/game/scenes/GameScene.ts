@@ -230,6 +230,7 @@ export class GameScene extends Phaser.Scene {
         // Post FX live in the camera's postPipelines (not postFX.list). 0 on canvas / when disabled.
         getPostFXCount: () => this.cameras.main.postPipelines.length,
         isReplaying: () => this.replayLabel.visible, // headless: detect a running replay
+        getCamera: () => ({ zoom: this.cameras.main.zoom, sx: this.cameras.main.scrollX, sy: this.cameras.main.scrollY }),
         getShootout: () => this.shootout,
         setMode: (m: GameMode) => this.setMode(m),
         setKeeperDifficulty: (d: number) => {
@@ -248,6 +249,8 @@ export class GameScene extends Phaser.Scene {
 
     // Input layer (PRD §4). Self-cleans on shutdown.
     new SwipeInput(this, { onUpdate: (phase, pts) => this.onSwipe(phase, pts) });
+
+    this.resetCamera(0); // guarantee a neutral, full-screen camera on first load
 
     this.scale.on('resize', this.onResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -320,36 +323,27 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ── Tier 1, item 3: dynamic camera ────────────────────────────────────────
-  // Subtle, always-eased framing. A "beat" pans partway toward a focus point and
-  // zooms in a touch; resetCamera eases (or snaps) back to the neutral penalty view.
-  private cameraBeat(kind: 'aim' | 'strike' | 'goal' | 'save', focus?: { x: number; y: number }): void {
+  // A gentle, CENTRED zoom pulse on a goal / save only — NO panning (panning
+  // toward a focus point cropped the frame and read as a lurching camera) and NO
+  // aim/strike zoom (too frequent). Centred zoom can't crop asymmetrically, so the
+  // frame always stays whole. The `focus` arg is ignored (kept for call-site shape).
+  private cameraBeat(kind: 'aim' | 'strike' | 'goal' | 'save', _focus?: { x: number; y: number }): void {
     const C = CONFIG.JUICE.camera;
     if (!C.enabled) return;
-    const cam = this.cameras.main;
-    const cx = this.scale.width / 2;
-    const cy = this.scale.height / 2;
-    const zoom = kind === 'aim' ? C.aimZoom : kind === 'strike' ? C.strikeZoom : kind === 'goal' ? C.goalZoom : C.saveZoom;
-    // Recenter only PARTWAY toward the focus so the goal never leaves the frame.
-    const fx = focus ? Phaser.Math.Linear(cx, focus.x, C.focusStrength) : cx;
-    const fy = focus ? Phaser.Math.Linear(cy, focus.y, C.focusStrength) : cy;
-    const dur = kind === 'aim' ? C.returnMs : C.moveMs;
-    cam.pan(fx, fy, dur, C.ease, true);
-    cam.zoomTo(zoom, dur, C.ease, true);
+    if (kind === 'aim' || kind === 'strike') return; // no camera move on these
+    const zoom = kind === 'goal' ? C.goalZoom : C.saveZoom;
+    this.cameras.main.zoomTo(zoom, C.moveMs, C.ease, true);
   }
 
-  /** Ease (ms>0) or snap (ms<=0) the camera back to the neutral, centred view. */
+  /** Ease (ms>0) or snap (ms<=0) the camera back to the neutral 1.0 zoom. */
   private resetCamera(ms: number): void {
     const cam = this.cameras.main;
-    const cx = this.scale.width / 2;
-    const cy = this.scale.height / 2;
     if (ms <= 0 || !CONFIG.JUICE.camera.enabled) {
-      cam.panEffect.reset();
       cam.zoomEffect.reset();
       cam.setZoom(1);
-      cam.centerOn(cx, cy);
+      cam.centerOn(this.scale.width / 2, this.scale.height / 2);
       return;
     }
-    cam.pan(cx, cy, ms, CONFIG.JUICE.camera.ease, true);
     cam.zoomTo(1, ms, CONFIG.JUICE.camera.ease, true);
   }
 
@@ -582,12 +576,11 @@ export class GameScene extends Phaser.Scene {
     this.resetCamera(0);
   }
 
-  private cameraReplay(focus: { x: number; y: number }): void {
+  private cameraReplay(_focus: { x: number; y: number }): void {
     if (!CONFIG.JUICE.camera.enabled) return;
     const R = CONFIG.JUICE.replay;
-    const cam = this.cameras.main;
-    cam.pan(focus.x, focus.y, R.inMs, CONFIG.JUICE.camera.ease, true);
-    cam.zoomTo(R.zoom, R.inMs, CONFIG.JUICE.camera.ease, true);
+    // Zoom-only (centred) — no pan, to match the rest of the camera (no cropping).
+    this.cameras.main.zoomTo(R.zoom, R.inMs, CONFIG.JUICE.camera.ease, true);
   }
 
   // ── Tier 3, item 9: post-processing grade (WebGL only) ────────────────────
