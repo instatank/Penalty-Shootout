@@ -331,20 +331,21 @@ export class GameScene extends Phaser.Scene {
     const C = CONFIG.JUICE.camera;
     if (!C.enabled) return;
     if (kind === 'aim' || kind === 'strike') return; // no camera move on these
-    const zoom = kind === 'goal' ? C.goalZoom : C.saveZoom;
+    const zoom = C.baseZoom * (kind === 'goal' ? C.goalZoom : C.saveZoom);
     this.cameras.main.zoomTo(zoom, C.moveMs, C.ease, true);
   }
 
-  /** Ease (ms>0) or snap (ms<=0) the camera back to the neutral 1.0 zoom. */
+  /** Ease (ms>0) or snap (ms<=0) the camera back to the neutral (pulled-back) view. */
   private resetCamera(ms: number): void {
     const cam = this.cameras.main;
+    const base = CONFIG.JUICE.camera.enabled ? CONFIG.JUICE.camera.baseZoom : 1;
     if (ms <= 0 || !CONFIG.JUICE.camera.enabled) {
       cam.zoomEffect.reset();
-      cam.setZoom(1);
+      cam.setZoom(base);
       cam.centerOn(this.scale.width / 2, this.scale.height / 2);
       return;
     }
-    cam.zoomTo(1, ms, CONFIG.JUICE.camera.ease, true);
+    cam.zoomTo(base, ms, CONFIG.JUICE.camera.ease, true);
   }
 
   // ── Tier 1, item 4: hit-stop ──────────────────────────────────────────────
@@ -578,9 +579,11 @@ export class GameScene extends Phaser.Scene {
 
   private cameraReplay(_focus: { x: number; y: number }): void {
     if (!CONFIG.JUICE.camera.enabled) return;
+    const C = CONFIG.JUICE.camera;
     const R = CONFIG.JUICE.replay;
     // Zoom-only (centred) — no pan, to match the rest of the camera (no cropping).
-    this.cameras.main.zoomTo(R.zoom, R.inMs, CONFIG.JUICE.camera.ease, true);
+    // Relative to the pulled-back base so the dramatic push-in is consistent.
+    this.cameras.main.zoomTo(C.baseZoom * R.zoom, R.inMs, C.ease, true);
   }
 
   // ── Tier 3, item 9: post-processing grade (WebGL only) ────────────────────
@@ -1431,10 +1434,18 @@ export class GameScene extends Phaser.Scene {
       g.fillRect(r.x, r.y, r.width, r.height);
     }
 
+    // The swipe path comes in as SCREEN coords; this `fx` layer is world-space, so
+    // map each point through the camera (matters once the neutral zoom is < 1).
+    const cam = this.cameras.main;
+    const wp = (p: SwipePoint) => cam.getWorldPoint(p.x, p.y);
     g.lineStyle(2, CONFIG.COLORS.swipePath, 0.9);
     g.beginPath();
-    g.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) g.lineTo(points[i].x, points[i].y);
+    const p0 = wp(points[0]);
+    g.moveTo(p0.x, p0.y);
+    for (let i = 1; i < points.length; i++) {
+      const p = wp(points[i]);
+      g.lineTo(p.x, p.y);
+    }
     g.strokePath();
 
     const ball = this.layout.ball;
@@ -1600,21 +1611,30 @@ export class GameScene extends Phaser.Scene {
     const horizon = this.layout.horizonY;
     const g = this.g();
 
+    // OVERSCAN: the neutral camera is pulled back (CONFIG.JUICE.camera.baseZoom < 1),
+    // which reveals area beyond the canvas. Paint the stadium/pitch past every edge
+    // by this margin so the pulled-back view shows more field, never empty bars.
+    const M = CONFIG.JUICE.camera.enabled ? Math.max(width, height) * 0.18 : 0;
+    const L = -M;
+    const W = width + 2 * M;
+
     g.fillStyle(CONFIG.COLORS.stadium, 1);
-    g.fillRect(0, 0, width, horizon);
+    g.fillRect(L, -M, W, horizon + M); // stands (extended up + sideways)
     g.fillStyle(CONFIG.COLORS.stadiumBand, 1);
-    g.fillRect(0, horizon * 0.28, width, horizon * 0.22);
+    g.fillRect(L, horizon * 0.28, W, horizon * 0.22);
 
     g.fillStyle(CONFIG.COLORS.pitch, 1);
-    g.fillRect(0, horizon, width, height - horizon);
+    g.fillRect(L, horizon, W, height - horizon + M); // grass (extended down + sideways)
 
     g.fillStyle(CONFIG.COLORS.pitchStripe, 1);
     const stripes = 8;
     for (let i = 0; i < stripes; i += 2) {
       const y0 = horizon + Math.pow(i / stripes, 1.6) * (height - horizon);
       const y1 = horizon + Math.pow((i + 1) / stripes, 1.6) * (height - horizon);
-      g.fillRect(0, y0, width, y1 - y0);
+      g.fillRect(L, y0, W, y1 - y0);
     }
+    // One extra stripe band below the bottom edge so the overscan grass isn't flat.
+    g.fillRect(L, height, W, M);
   }
 
   private drawPenaltyBox(): void {

@@ -428,12 +428,18 @@ const JUICE = {
   // Centred zoom can never crop asymmetrically, so the frame always stays whole.
   camera: {
     enabled: true,
-    aimZoom: 1.0, // no push-in while aiming (kept for shape; 1.0 = no-op)
+    // NEUTRAL view is pulled back below 1.0 so there's breathing room (pitch +
+    // stands) around the goal/box. The scene background is OVERSCANNED to fill the
+    // margin (see GameScene.drawBackground) so this never shows empty bars.
+    baseZoom: 0.9, // resting zoom (<1 = pulled back; 1.0 = exactly full-screen)
+    // goal/save are MULTIPLIERS on baseZoom — the push-in stays gentle and, with
+    // baseZoom 0.9, lands around ~0.95 so it never slams to full-screen/too-close.
+    goalZoom: 1.06, // celebratory push-in on a goal (× baseZoom)
+    saveZoom: 1.05, // push-in on a save (× baseZoom)
+    aimZoom: 1.0, // no push-in while aiming (1.0 = no-op)
     strikeZoom: 1.0, // no zoom on the strike (1.0 = no-op)
-    goalZoom: 1.05, // a gentle celebratory push-in on a goal
-    saveZoom: 1.045, // a gentle push-in on a save
     moveMs: 260, // zoom-in duration for a beat
-    returnMs: 380, // ease back to the neutral (1.0) view between kicks
+    returnMs: 380, // ease back to the neutral (baseZoom) view between kicks
     ease: 'Sine.easeInOut',
   },
 
