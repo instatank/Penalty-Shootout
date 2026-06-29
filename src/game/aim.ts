@@ -31,6 +31,25 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+/**
+ * The power/accuracy tradeoff (Phase 1, PRD §5). Scatter radius in pixels: stays
+ * at baseError up to powerAccuracyThreshold, then grows fast. A controlled shot
+ * lands where aimed; a greedy max-power shot may miss the target — or the frame.
+ */
+export function scatterRadius(power: number, goalWidth: number): number {
+  const I = CONFIG.INPUT;
+  const excess = Math.max(0, (power - I.powerAccuracyThreshold) / (1 - I.powerAccuracyThreshold));
+  return (I.baseError + I.kPower * Math.pow(excess, I.scatterExponent)) * goalWidth;
+}
+
+/** The shot's own outcome, ignoring the keeper (Phase 1): did it hit the frame? */
+export type ShotOutcome = 'on-target' | 'wide' | 'over';
+export function shotOutcome(landingNorm: { x: number; y: number }): ShotOutcome {
+  if (landingNorm.y < 0) return 'over'; // above the crossbar
+  if (landingNorm.x < 0 || landingNorm.x > 1 || landingNorm.y > 1) return 'wide';
+  return 'on-target';
+}
+
 export function computeAim(
   swipe: SwipeSample,
   goal: Rect,
@@ -52,7 +71,7 @@ export function computeAim(
   const heightFrac = clamp((up / screenH - a.reachLow) / span, 0, a.overshoot);
   const targetY = goalBottom - heightFrac * goal.height;
 
-  const errorRadius = (CONFIG.INPUT.baseError + CONFIG.INPUT.kPower * swipe.power) * goal.width;
+  const errorRadius = scatterRadius(swipe.power, goal.width);
   const targetZone = zoneAtPoint(targetX, targetY, goal);
 
   return { targetX, targetY, xFrac, heightFrac, errorRadius, targetZone };
@@ -103,7 +122,7 @@ export function finalizeShot(aim: Aim, swipe: SwipeSample, goal: Rect, seed: num
  */
 export function cpuShot(targetZone: ZoneId, power: number, curve: number, goal: Rect, seed: number): TakerInput {
   const center = zoneCenter(targetZone, goal);
-  const errorRadius = (CONFIG.INPUT.baseError + CONFIG.INPUT.kPower * power) * goal.width;
+  const errorRadius = scatterRadius(power, goal.width);
   const shot = landShot(center.x, center.y, errorRadius, targetZone, power, curve, goal, seed);
 
   // Keep the CPU on-target: clamp the landing inside the goal so it never sprays

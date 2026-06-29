@@ -73,6 +73,13 @@ const COLORS = {
   aimRing: 0xff8a80, // scatter ring (errorRadius)
   zoneHighlight: 0xffeb3b, // the targeted 3x2 cell
 
+  // Power meter (Phase 1). Fill is green in the dependable range, red past the
+  // accuracy threshold — a live read on the power/accuracy tradeoff.
+  powerSafe: 0x4caf50,
+  powerRisky: 0xff5252,
+  powerMeterBg: 0x10202c,
+  powerMeterEdge: 0xffffff,
+
   // Outcome banner colours.
   outcomeGoal: 0x4caf50, // GOAL
   outcomeSave: 0xff7043, // SAVE
@@ -186,11 +193,15 @@ const INPUT = {
   // bend, so this is for subtle effect only, never a banana kick (owner note).
   maxCurve: 0.25,
 
-  // Accuracy scatter: errorRadius = (baseError + kPower * power) * goalWidth.
-  // Fractions of goal width so the scatter scales with screen. Used for the M2
-  // scatter ring preview and the M4 landing point.
-  baseError: 0.015, // ~1.5% of goal width at zero power (small)
-  kPower: 0.09, // grows with power — high power widens the error (PRD §5)
+  // POWER / ACCURACY TRADEOFF (Phase 1 — the core skill). Scatter radius (as a
+  // fraction of goal width) stays at baseError up to powerAccuracyThreshold, then
+  // grows fast: errorRadius = (baseError + kPower * excess^scatterExponent) * goalW,
+  // where excess = (power - threshold) / (1 - threshold), clamped ≥0. So a
+  // controlled shot lands where aimed; a greedy max-power shot may miss the frame.
+  baseError: 0.015, // ~1.5% of goal width below the threshold (reliably accurate)
+  kPower: 0.17, // extra scatter at max power — big enough to miss a tight corner
+  powerAccuracyThreshold: 0.55, // power below which accuracy is dependable
+  scatterExponent: 1.6, // how sharply accuracy degrades past the threshold
 
   minSwipeDistFrac: 0.03, // shorter than this (fraction of screen height) = a tap, ignored
 } as const;
@@ -214,7 +225,11 @@ const AIM = {
 // FLIGHT (PRD §5) — ball travel + fake depth. (Not wired until Milestone 3.)
 // ─────────────────────────────────────────────────────────────────────────────
 const FLIGHT = {
-  flightDuration: 620, // ms ball takes to reach the goal plane
+  // Higher power = faster ball travel (Phase 1). The taker flight time lerps from
+  // slow (a gentle shot) to fast (a blasted shot) by power. (Keeper-view flight
+  // uses CONFIG.CPU_TAKER.flightTime — the reaction window — instead.)
+  flightDurationSlow: 760, // ms at min power
+  flightDurationFast: 470, // ms at max power
   easing: 'Quad.easeOut', // decelerate into the goal (reads as perspective)
   arcHeightFrac: 0.075, // apex lift above the straight path, as a fraction of screen height.
   //  Lowered from 0.12 — the vertical arc read too floaty (owner note). Sideways
@@ -336,6 +351,12 @@ const HAPTICS = {
 // UI — outcome reveal (PRD §12). Big GOAL / SAVE / MISS banner between kicks.
 // ─────────────────────────────────────────────────────────────────────────────
 const UI = {
+  // Live power meter (Phase 1), pinned in the lower thumb zone while aiming.
+  powerMeter: {
+    widthFrac: 0.46, // bar width / screen width
+    heightFrac: 0.024, // bar height / screen height
+    bottomFrac: 0.04, // gap from the bottom edge / screen height
+  },
   outcomeHoldMs: 1200, // how long the GOAL/SAVE/MISS banner stays up
   betweenKicksMs: 250, // small beat before the ball resets for the next kick
   goalZoomPeak: 1.3, // banner overshoot scale on a GOAL (celebratory pop)

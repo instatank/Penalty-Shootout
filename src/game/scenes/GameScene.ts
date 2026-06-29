@@ -19,7 +19,7 @@ import Phaser from 'phaser';
 import { CONFIG } from '../../config';
 import { ZONE_IDS, zoneRect, zoneCenter, type ZoneId } from '../zones';
 import { computeLayout, type Layout } from '../layout';
-import { computeAim, computeDive } from '../aim';
+import { computeAim, computeDive, shotOutcome } from '../aim';
 import { resolvePenalty, type PenaltyResult, type TakerInput, type KeeperInput } from '../resolve';
 import { LocalHumanProvider, CpuProvider, type InputProvider, type PenaltyContext } from '../../input/providers';
 import { SwipeInput, deriveSwipe, type SwipePhase, type SwipePoint } from '../../input/SwipeInput';
@@ -39,6 +39,7 @@ export class GameScene extends Phaser.Scene {
   private world!: Phaser.GameObjects.Container; // static pitch visuals
   private netGfx!: Phaser.GameObjects.Graphics; // the net (shakeable on a goal)
   private fx!: Phaser.GameObjects.Graphics; // swipe / aim feedback overlay
+  private powerGfx!: Phaser.GameObjects.Graphics; // live power meter (Phase 1)
   private ball!: Phaser.GameObjects.Container;
   private ballGfx!: Phaser.GameObjects.Graphics;
   private keeper!: Phaser.GameObjects.Container;
@@ -97,6 +98,7 @@ export class GameScene extends Phaser.Scene {
     this.rebuild(this.scale.width, this.scale.height);
 
     this.fx = this.add.graphics().setDepth(500);
+    this.powerGfx = this.add.graphics().setDepth(950).setScrollFactor(0); // power meter (Phase 1)
 
     // Big GOAL / SAVE / MISS banner, centred, hidden until a result.
     this.outcomeText = this.add
@@ -190,6 +192,7 @@ export class GameScene extends Phaser.Scene {
     this.state = 'aiming';
     this.diveCaptured = null;
     this.fx.clear();
+    this.hidePowerMeter();
     this.outcomeText.setVisible(false);
     this.netGfx.setPosition(0, 0); // cancel any leftover shake
     this.resetBall();
@@ -296,12 +299,17 @@ export class GameScene extends Phaser.Scene {
     const minDist = this.scale.height * CONFIG.INPUT.minSwipeDistFrac;
     if (phase === 'end' && sample.distance < minDist) {
       this.fx.clear();
+      this.hidePowerMeter();
       this.showIdleDebug();
       return;
     }
 
     const upPct = Math.round((-sample.dy / this.scale.height) * 100);
     const sidePct = Math.round((sample.dx / this.scale.width) * 100);
+
+    // Live power meter: fills with power, turns red past the accuracy threshold.
+    if (phase === 'end') this.hidePowerMeter();
+    else this.drawPowerMeter(sample.power);
 
     this.drawSwipeFeedback(sample.points, aim);
     this.debug.setLines([
@@ -344,14 +352,20 @@ export class GameScene extends Phaser.Scene {
     const bendPx = taker.curve * CONFIG.FLIGHT.curveGain * goal.width;
     if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
 
+    // Higher power = faster ball travel (Phase 1).
+    const dur = Phaser.Math.Linear(CONFIG.FLIGHT.flightDurationSlow, CONFIG.FLIGHT.flightDurationFast, taker.power);
+
+    // The shot's own outcome (ignores the keeper) — Phase 1 diagnostic.
+    const shot = shotOutcome(taker.landingNorm).toUpperCase();
+
     this.debug.setLines([
       'FLIGHT',
-      'power ' + taker.power.toFixed(2),
-      'landing ' + (taker.landingZone ?? 'WIDE/OVER') + '   keeper ' + keeper.diveZone,
+      'power ' + taker.power.toFixed(2) + '   shot ' + shot,
+      'landing ' + (taker.landingZone ?? 'OFF FRAME') + '   keeper ' + keeper.diveZone,
       'timing ' + result.timingQuality.toFixed(2) + '   reach ' + result.reachMargin.toFixed(2),
     ]);
 
-    await this.flyBall(start, end, bendPx, CONFIG.FLIGHT.flightDuration);
+    await this.flyBall(start, end, bendPx, dur);
     if (result.saved) await this.deflectBall(handX, handY);
   }
 
@@ -635,6 +649,43 @@ export class GameScene extends Phaser.Scene {
     const r = Math.max(5, this.layout.ball.r * 0.35);
     g.lineStyle(3, CONFIG.COLORS.aimReticle, 0.9);
     g.strokeCircle(p.x, p.y, r);
+  }
+
+  /** Live power meter (Phase 1): a bar that fills with power and turns red past
+   *  the accuracy threshold — a direct read on the power/accuracy tradeoff. */
+  private drawPowerMeter(power: number): void {
+    const pm = CONFIG.UI.powerMeter;
+    const w = this.scale.width * pm.widthFrac;
+    const h = this.scale.height * pm.heightFrac;
+    const x = (this.scale.width - w) / 2;
+    const y = this.scale.height * (1 - pm.bottomFrac) - h;
+    const radius = h * 0.4;
+    const p = Phaser.Math.Clamp(power, 0, 1);
+    const thr = CONFIG.INPUT.powerAccuracyThreshold;
+
+    const g = this.powerGfx;
+    g.clear();
+    g.fillStyle(CONFIG.COLORS.powerMeterBg, 0.7);
+    g.fillRoundedRect(x, y, w, h, radius);
+    // Fill in two segments: green up to the threshold (controlled), then red for
+    // the overshoot beyond it (the risky zone) — shows HOW far past the line you are.
+    const safeW = w * Math.min(p, thr);
+    g.fillStyle(CONFIG.COLORS.powerSafe, 0.95);
+    g.fillRect(x + 1, y + 1, Math.max(0, safeW - 1), h - 2);
+    if (p > thr) {
+      g.fillStyle(CONFIG.COLORS.powerRisky, 0.95);
+      g.fillRect(x + w * thr, y + 1, w * (p - thr), h - 2);
+    }
+    // Threshold tick + edge.
+    const tx = x + w * thr;
+    g.lineStyle(2, CONFIG.COLORS.powerMeterEdge, 0.85);
+    g.lineBetween(tx, y - 1, tx, y + h + 1);
+    g.lineStyle(2, CONFIG.COLORS.powerMeterEdge, 0.5);
+    g.strokeRoundedRect(x, y, w, h, radius);
+  }
+
+  private hidePowerMeter(): void {
+    this.powerGfx.clear();
   }
 
   /** Recompute the layout and redraw every STATIC pitch visual + reset actors.
