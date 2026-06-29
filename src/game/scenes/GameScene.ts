@@ -17,10 +17,11 @@
 
 import Phaser from 'phaser';
 import { CONFIG } from '../../config';
-import { ZONE_IDS, zoneRect, zoneCenter, type ZoneId } from '../zones';
+import { ZONE_IDS, zoneRect, zoneCenter, zoneIndices, zoneFrom, type ZoneId } from '../zones';
 import { computeLayout, type Layout } from '../layout';
 import { computeAim, computeDive, shotOutcome } from '../aim';
 import { resolvePenalty, type PenaltyResult, type TakerInput, type KeeperInput } from '../resolve';
+import { createShootout, recordKick, currentRound, type ShootoutState, type Side } from '../shootout';
 import { LocalHumanProvider, CpuProvider, type InputProvider, type PenaltyContext } from '../../input/providers';
 import { SwipeInput, deriveSwipe, type SwipePhase, type SwipePoint } from '../../input/SwipeInput';
 import { DebugOverlay } from '../../ui/DebugOverlay';
@@ -68,6 +69,22 @@ export class GameScene extends Phaser.Scene {
   // dive the human committed this window (null until they flick).
   private strikeAt = 0;
   private diveCaptured: { zone: ZoneId; timing: number } | null = null;
+
+  // ── Shootout session (Phase 3) ────────────────────────────────────────────
+  private session = 0; // bumps to stop the running loop (mode switch / play again)
+  private shootout: ShootoutState = createShootout(); // Taker-mode score machine
+  private scoreboard!: Phaser.GameObjects.Container;
+  private scoreText!: Phaser.GameObjects.Text;
+  private scoreSub!: Phaser.GameObjects.Text;
+  private scoreDots!: Phaser.GameObjects.Graphics;
+  private endBg!: Phaser.GameObjects.Rectangle;
+  private endTitle!: Phaser.GameObjects.Text;
+  private endScore!: Phaser.GameObjects.Text;
+  private endBtn!: Phaser.GameObjects.Text;
+  private diffButton!: Phaser.GameObjects.Text;
+  private diffNames = ['easy', 'medium', 'hard'] as const;
+  private diffIndex = 1; // default medium
+  private endShown = false; // true while the end screen is up (tap anywhere → play again)
 
   constructor() {
     super('GameScene');
@@ -124,6 +141,24 @@ export class GameScene extends Phaser.Scene {
     this.modeButton.on('pointerup', () => this.toggleMode());
     this.input.keyboard?.on('keydown-M', () => this.toggleMode());
 
+    // Difficulty selector (Phase 2/3) — cycles EASY/MEDIUM/HARD, bottom-right.
+    this.diffButton = this.add
+      .text(this.scale.width - 8, this.scale.height - 8, '', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#ffffff',
+        backgroundColor: '#00000088',
+        padding: { x: 8, y: 6 },
+      })
+      .setOrigin(1, 1)
+      .setDepth(1001)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+    this.diffButton.on('pointerup', () => this.cycleDifficulty());
+    this.applyDifficulty(); // set label + cpu.difficulty from diffIndex
+
+    this.buildSessionUI(); // scoreboard + end screen (Phase 3)
+
     this.debug = new DebugOverlay(this);
     this.showIdleDebug();
 
@@ -131,13 +166,24 @@ export class GameScene extends Phaser.Scene {
     if (import.meta.env.DEV) {
       (window as unknown as Record<string, unknown>).__penalty = {
         resolvePenalty,
+        createShootout,
+        recordKick, // expose the pure shootout logic for headless unit tests
         getState: () => ({ mode: this.mode, state: this.state, diveCaptured: this.diveCaptured }),
+        getShootout: () => this.shootout,
         setMode: (m: GameMode) => this.setMode(m),
         setKeeperDifficulty: (d: number) => {
           this.cpu.difficulty = d;
         },
+        forceEnd: () => this.showEndScreen('opponent'), // headless: pop the end screen to test Play Again
       };
     }
+
+    // Restart on a tap anywhere while the end screen is up. Driven by SCENE input
+    // (reliable) rather than the button's own hit area — a GameObject created
+    // hidden then shown doesn't always re-register for hit testing in Phaser.
+    this.input.on('pointerup', () => {
+      if (this.endShown) this.playAgain();
+    });
 
     // Input layer (PRD §4). Self-cleans on shutdown.
     new SwipeInput(this, { onUpdate: (phase, pts) => this.onSwipe(phase, pts) });
@@ -148,46 +194,250 @@ export class GameScene extends Phaser.Scene {
       this.scale.off('resize', this.onResize, this);
     });
 
-    void this.runKickLoop();
+    this.startSession();
   }
 
-  // ── The provider-driven kick loop (never branches on CPU vs human) ────────
-  private async runKickLoop(): Promise<void> {
-    while (this.alive) {
-      const epoch = this.epoch;
+  // ── Session controller ────────────────────────────────────────────────────
+  // Taker mode runs a full SHOOTOUT (Phase 3); Keeper mode stays a free practice
+  // loop (Phase 4 will route it through the same shootout machine). Bumping
+  // `session` makes any running loop exit so a mode switch / play-again is clean.
+  private startSession(): void {
+    this.session++;
+    const session = this.session;
+    this.hideEndScreen();
+    if (this.mode === 'taker') void this.runShootout(session);
+    else void this.runPractice(session);
+  }
+
+  /** One provider-driven kick (never branches on CPU vs human). Returns the
+   *  result, or null if it was cancelled mid-flight (resize) and should retake. */
+  private async playKick(): Promise<PenaltyResult | null> {
+    const epoch = this.epoch;
+    this.enterAiming();
+    const ctx: PenaltyContext = { seed: this.makeSeed(), goal: this.layout.goal };
+
+    const taker = await this.takerProvider.getTakerInput(ctx).catch(() => null);
+    if (!taker || epoch !== this.epoch) return null;
+
+    this.state = 'busy';
+    const keeper = await this.keeperProvider.getKeeperInput(ctx, taker).catch(() => null);
+    if (!keeper || epoch !== this.epoch) return null;
+
+    const result = resolvePenalty(taker, keeper, ctx.seed);
+    await this.revealKick(taker, keeper, result);
+    if (epoch !== this.epoch) return null;
+    await this.showOutcome(result);
+    return result;
+  }
+
+  /** Keeper-mode (and any free-play) loop: take kicks forever, no score. */
+  private async runPractice(session: number): Promise<void> {
+    this.setScoreboardVisible(false);
+    while (this.alive && session === this.session) {
       try {
-        this.enterAiming();
-
-        const ctx: PenaltyContext = { seed: this.makeSeed(), goal: this.layout.goal };
-
-        // Taker action. Taker mode: a real swipe (human). Keeper mode: CPU shot.
-        // null = cancelled (resize / mode switch) → retry.
-        const taker = await this.takerProvider.getTakerInput(ctx).catch(() => null);
-        if (!taker || epoch !== this.epoch) continue;
-
-        this.state = 'busy';
-        // Keeper action. Taker mode: CPU dive (instant). Keeper mode: the human's
-        // dive, captured while the scene plays the shot. null = cancelled → retry.
-        const keeper = await this.keeperProvider.getKeeperInput(ctx, taker).catch(() => null);
-        if (!keeper || epoch !== this.epoch) continue;
-
-        const result = resolvePenalty(taker, keeper, ctx.seed);
-
-        await this.revealKick(taker, keeper, result);
-        if (epoch !== this.epoch) continue;
-        await this.showOutcome(result);
-        if (epoch !== this.epoch) continue;
-        await this.delayP(CONFIG.UI.betweenKicksMs);
+        await this.playKick();
+        if (this.alive && session === this.session) await this.delayP(CONFIG.UI.betweenKicksMs);
       } catch (e) {
-        // A single kick failing must not kill the loop.
-        console.error('[kick loop]', e);
+        console.error('[practice loop]', e);
         await this.delayP(200);
       }
     }
   }
 
+  /** Taker-mode shootout: alternate player / opponent kicks, track score, end
+   *  early when decided, sudden death on a tie, then the end screen (Phase 3). */
+  private async runShootout(session: number): Promise<void> {
+    this.shootout = createShootout(CONFIG.SESSION.kicksPerSession);
+    this.setScoreboardVisible(true);
+    this.updateScoreboard();
+
+    while (this.alive && session === this.session && this.shootout.phase !== 'done') {
+      try {
+        const side: Side | null = this.shootout.next;
+        let scored: boolean;
+        if (side === 'opponent') {
+          scored = await this.playOpponentShot();
+        } else {
+          const r = await this.playKick();
+          if (session !== this.session) return; // mode switch / play again
+          if (!r) continue; // cancelled (resize) → retake the same kick
+          scored = r.scored;
+        }
+        if (session !== this.session) return;
+
+        this.shootout = recordKick(this.shootout, scored);
+        this.updateScoreboard();
+        if (this.shootout.phase !== 'done') await this.delayP(CONFIG.UI.betweenKicksMs);
+      } catch (e) {
+        console.error('[shootout]', e);
+        await this.delayP(200);
+      }
+    }
+
+    if (this.alive && session === this.session && this.shootout.phase === 'done') {
+      this.showEndScreen(this.shootout.winner ?? 'opponent');
+    }
+  }
+
+  /** A simulated opponent penalty (Phase 3): outcome by tuned probability, with a
+   *  simple ball + keeper sequence for drama. The player never keeps goal here. */
+  private async playOpponentShot(): Promise<boolean> {
+    this.enterAiming();
+    this.state = 'busy';
+    const goal = this.layout.goal;
+    const scored = Math.random() < CONFIG.SESSION.opponentScoreChance;
+
+    // Pick a target (corners favoured when scoring) and a keeper guess consistent
+    // with the chosen outcome: dive AT the ball to save, the wrong way to concede.
+    const pool: ZoneId[] = scored ? ['TL', 'TR', 'BL', 'BR'] : ['TL', 'TM', 'TR', 'BL', 'BM', 'BR'];
+    const targetZone = pool[Math.floor(Math.random() * pool.length)];
+    const target = zoneCenter(targetZone, goal);
+    const { col, row } = zoneIndices(targetZone);
+    const diveZone = scored ? zoneFrom(col === 1 ? (Math.random() < 0.5 ? 0 : 2) : col === 0 ? 2 : 0, row) : targetZone;
+    const hp = zoneCenter(diveZone, goal);
+
+    const start = { x: this.layout.ball.x, y: this.layout.ball.y };
+    const dur = Phaser.Math.Linear(CONFIG.FLIGHT.flightDurationSlow, CONFIG.FLIGHT.flightDurationFast, 0.6);
+    this.time.delayedCall(CONFIG.CPU_KEEPER.reactionDelay, () => this.diveKeeperTo(hp.x, hp.y, CONFIG.CPU_KEEPER.diveDuration));
+    if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
+    this.debug.setLines(['OPPONENT KICK', 'target ' + targetZone, scored ? '→ scores' : '→ saved']);
+
+    await this.flyBall(start, scored ? target : { x: hp.x, y: hp.y }, 0, dur);
+    if (!scored) await this.deflectBall(hp.x, hp.y);
+
+    // For the player, the opponent MISSING is the good news (cheer), scoring is bad.
+    const C = CONFIG.COLORS;
+    await this.announceOutcome(scored ? 'GOAL' : 'SAVED!', scored ? C.outcomeGoal : C.outcomeSave, !scored, scored);
+    return scored;
+  }
+
   private makeSeed(): number {
     return Math.floor(Math.random() * 0x7fffffff);
+  }
+
+  // ── Session UI: scoreboard, difficulty, end screen (Phase 3) ──────────────
+  private buildSessionUI(): void {
+    // Scoreboard (top-centre): score line, kick dots, phase/round sub-line.
+    this.scoreText = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '24px', color: '#ffffff' }).setOrigin(0.5, 0);
+    this.scoreSub = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: '#cfe8ff' }).setOrigin(0.5, 0);
+    this.scoreDots = this.add.graphics();
+    this.scoreboard = this.add.container(0, 0, [this.scoreText, this.scoreDots, this.scoreSub]).setDepth(960).setScrollFactor(0).setVisible(false);
+
+    // End screen — TOP-LEVEL objects (not a container): Phaser input on container
+    // children is unreliable, but a plain top-level interactive Text works (same
+    // as the mode button). Depths: backdrop 1100 (blocks underlying buttons),
+    // texts/button above it.
+    this.endBg = this.add.rectangle(0, 0, 10, 10, 0x07121c, 0.86).setOrigin(0.5).setDepth(1100).setScrollFactor(0).setVisible(false);
+    this.endTitle = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '52px', color: '#ffffff' }).setOrigin(0.5).setDepth(1102).setScrollFactor(0).setVisible(false);
+    this.endScore = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '22px', color: '#cfe8ff' }).setOrigin(0.5).setDepth(1102).setScrollFactor(0).setVisible(false);
+    this.endBtn = this.add
+      .text(0, 0, 'PLAY AGAIN', { fontFamily: 'monospace', fontStyle: 'bold', fontSize: '22px', color: '#07121c', backgroundColor: '#4caf50', padding: { x: 18, y: 12 } })
+      .setOrigin(0.5)
+      .setDepth(1103)
+      .setScrollFactor(0)
+      .setVisible(false);
+    // Restart is handled by the scene-level pointerup (tap anywhere) — see create().
+
+    this.layoutSessionUI(this.scale.width, this.scale.height);
+  }
+
+  private layoutSessionUI(w: number, h: number): void {
+    if (!this.scoreboard) return;
+    this.scoreText.setPosition(w / 2, 6);
+    this.scoreSub.setPosition(w / 2, 62);
+    this.endBg.setPosition(w / 2, h / 2).setSize(w, h);
+    this.endTitle.setPosition(w / 2, h * 0.4);
+    this.endScore.setPosition(w / 2, h * 0.4 + 52);
+    this.endBtn.setPosition(w / 2, h * 0.61);
+    this.updateScoreboard();
+  }
+
+  private setScoreboardVisible(v: boolean): void {
+    this.scoreboard?.setVisible(v);
+  }
+
+  private setEndScreenVisible(v: boolean): void {
+    this.endShown = v;
+    this.endBg?.setVisible(v);
+    this.endTitle?.setVisible(v);
+    this.endScore?.setVisible(v);
+    this.endBtn?.setVisible(v);
+    // While the end screen is up, don't let taps fall through to the other buttons.
+    if (v) {
+      this.modeButton?.disableInteractive();
+      this.diffButton?.disableInteractive();
+    } else {
+      this.modeButton?.setInteractive({ useHandCursor: true });
+      this.diffButton?.setInteractive({ useHandCursor: true });
+    }
+  }
+
+  private updateScoreboard(): void {
+    if (!this.scoreboard) return;
+    const s = this.shootout;
+    this.scoreText.setText('YOU  ' + s.player.scored + '  –  ' + s.opponent.scored + '  CPU');
+    this.scoreSub.setText(s.phase === 'suddenDeath' ? 'SUDDEN DEATH' : 'ROUND ' + Math.min(currentRound(s), s.regulationKicks) + ' / ' + s.regulationKicks);
+    this.drawScoreDots();
+  }
+
+  /** Two rows of kick markers (green = scored, red = missed, outline = pending). */
+  private drawScoreDots(): void {
+    const g = this.scoreDots;
+    g.clear();
+    const s = this.shootout;
+    const cx = this.scale.width / 2;
+    const slots = Math.max(s.regulationKicks, s.player.taken, s.opponent.taken);
+    const gap = 16;
+    const r = 5;
+    const rowW = (slots - 1) * gap;
+    const drawRow = (results: boolean[], taken: number, y: number) => {
+      for (let i = 0; i < slots; i++) {
+        const x = cx - rowW / 2 + i * gap;
+        if (i < taken) {
+          g.fillStyle(results[i] ? CONFIG.COLORS.outcomeGoal : CONFIG.COLORS.outcomeSave, 1);
+          g.fillCircle(x, y, r);
+        } else {
+          g.lineStyle(1.5, 0xffffff, 0.4);
+          g.strokeCircle(x, y, r);
+        }
+      }
+    };
+    drawRow(s.player.results, s.player.taken, 40);
+    drawRow(s.opponent.results, s.opponent.taken, 54);
+  }
+
+  private showEndScreen(winner: Side): void {
+    const s = this.shootout;
+    const win = winner === 'player';
+    this.endTitle.setText(win ? 'YOU WIN!' : 'YOU LOSE').setColor(win ? '#4caf50' : '#ff7043');
+    this.endScore.setText('FINAL   YOU  ' + s.player.scored + '  –  ' + s.opponent.scored + '  CPU');
+    this.setEndScreenVisible(true);
+    if (win) this.sfx.cheer();
+    else this.sfx.groan();
+  }
+
+  private hideEndScreen(): void {
+    this.setEndScreenVisible(false);
+  }
+
+  /** Full reset to a fresh shootout (Phase 3 — no state leaks between games). */
+  private playAgain(): void {
+    this.hideEndScreen();
+    this.epoch++;
+    this.human.cancel();
+    this.enterAiming();
+    this.startSession();
+  }
+
+  private cycleDifficulty(): void {
+    this.diffIndex = (this.diffIndex + 1) % this.diffNames.length;
+    this.applyDifficulty();
+  }
+
+  private applyDifficulty(): void {
+    const name = this.diffNames[this.diffIndex];
+    this.cpu.difficulty = CONFIG.CPU_KEEPER.presets[name];
+    this.diffButton.setText(name.toUpperCase());
   }
 
   private enterAiming(): void {
@@ -212,6 +462,8 @@ export class GameScene extends Phaser.Scene {
     this.fx.clear();
     this.outcomeText.setPosition(gameSize.width / 2, gameSize.height * 0.42);
     this.modeButton?.setY(gameSize.height - 8); // keep pinned to the bottom edge
+    this.diffButton?.setPosition(gameSize.width - 8, gameSize.height - 8);
+    this.layoutSessionUI(gameSize.width, gameSize.height);
     this.showIdleDebug();
   }
 
@@ -233,12 +485,13 @@ export class GameScene extends Phaser.Scene {
     }
     this.modeButton.setText('MODE: ' + (mode === 'taker' ? 'TAKE' : 'SAVE'));
 
-    // Tear down any in-flight kick and let the loop restart with the new roles.
+    // Tear down any in-flight kick and start a fresh session for the new mode.
     this.epoch++;
     this.human.cancel();
     // The camera changes with the mode, so rebuild the whole scene for the new view.
     this.rebuild(this.scale.width, this.scale.height);
     this.enterAiming();
+    this.startSession(); // Taker → shootout, Keeper → practice (bumps session)
   }
 
   // ── Input router: aim (Taker mode) vs dive (Keeper mode) ──────────────────
@@ -507,6 +760,7 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: this.takerFigure, scaleX: 1.06, scaleY: 0.96, duration: 110, yoyo: true, ease: 'Quad.easeOut' });
   }
 
+  // Player-kick outcome → reuses announceOutcome with the mode's win meaning.
   private async showOutcome(result: PenaltyResult): Promise<void> {
     if (import.meta.env.DEV) (window as unknown as { __lastResult?: unknown }).__lastResult = result;
     const label = result.outcome === 'goal' ? 'GOAL!' : result.outcome === 'save' ? 'SAVED!' : 'MISS!';
@@ -516,24 +770,22 @@ export class GameScene extends Phaser.Scene {
         : result.outcome === 'save'
           ? CONFIG.COLORS.outcomeSave
           : CONFIG.COLORS.outcomeMiss;
-
-    const isGoal = result.outcome === 'goal';
-    // Whether the PLAYER won this kick — and so what we celebrate. Taker mode: a
-    // goal. Keeper mode: a save (PRD §6 — the player is the keeper). The crowd +
-    // banner emotion follows this, not the raw outcome.
+    // Whether the PLAYER won this kick. Taker mode: a goal. Keeper mode: a save.
     const playerWon = this.mode === 'keeper' ? result.saved : result.scored;
 
     if (CONFIG.HAPTICS.enabled) {
       const ms = result.saved ? CONFIG.HAPTICS.saveMs : result.scored ? CONFIG.HAPTICS.goalMs : 0;
       if (ms) navigator.vibrate?.(ms);
     }
+    await this.announceOutcome(label, color, playerWon, result.outcome === 'goal');
+  }
 
-    // Crowd: cheer when the player wins the kick, groan otherwise.
+  /** Show the big centred banner + crowd + net shake for one kick. `playerWon`
+   *  drives the celebration; `isGoal` (the ball physically hit the net) drives the
+   *  net shake. Shared by player kicks and simulated opponent kicks (Phase 3). */
+  private async announceOutcome(label: string, color: number, playerWon: boolean, isGoal: boolean): Promise<void> {
     if (playerWon) this.sfx.cheer();
     else this.sfx.groan();
-
-    // The net shakes ONLY when the ball actually hits it (a physical goal),
-    // whichever mode we are in.
     if (isGoal) this.shakeNet();
 
     this.outcomeText
@@ -545,7 +797,6 @@ export class GameScene extends Phaser.Scene {
       .setScale(0.2)
       .setAlpha(1);
 
-    // Celebratory zoom: small → overshoot → settle; a player win pops + pulses.
     this.tweens.add({
       targets: this.outcomeText,
       scale: playerWon ? CONFIG.UI.goalZoomPeak : 1.0,

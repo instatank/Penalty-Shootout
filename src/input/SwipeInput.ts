@@ -2,8 +2,10 @@
  * SwipeInput.ts — the make-or-break input layer (PRD §4).
  *
  * Uses the raw Pointer Events API (NOT Phaser's pointer wrapper) so we get:
- *   - setPointerCapture() on pointerdown → the swipe stays locked to us even if
- *     the finger slides off the ball or off-screen (no mid-gesture "drop").
+ *   - gesture starts on the canvas but is tracked on the WINDOW → the swipe keeps
+ *     working if the finger slides off the ball/screen (no mid-gesture "drop").
+ *     NOTE: we deliberately do NOT use setPointerCapture — capturing the pointer
+ *     to the canvas starves Phaser's own input and breaks every on-screen button.
  *   - {x, y, t} path sampling on every pointermove → enough detail to compute
  *     curve, not just start/end.
  *   - mouse + stylus support for free (desktop testing works unchanged).
@@ -136,10 +138,14 @@ export class SwipeInput {
     this.onMove = (e) => this.handleMove(e);
     this.onUp = (e) => this.handleUp(e);
 
+    // A gesture STARTS on the canvas, but is TRACKED on the window so it keeps
+    // working if the finger slides off the canvas/screen — without setPointerCapture
+    // (capture redirects the whole pointer stream to the canvas, which starves
+    // Phaser's own input and silently breaks every on-screen button).
     this.canvas.addEventListener('pointerdown', this.onDown, { passive: false });
-    this.canvas.addEventListener('pointermove', this.onMove, { passive: false });
-    this.canvas.addEventListener('pointerup', this.onUp, { passive: false });
-    this.canvas.addEventListener('pointercancel', this.onUp, { passive: false });
+    window.addEventListener('pointermove', this.onMove, { passive: false });
+    window.addEventListener('pointerup', this.onUp, { passive: false });
+    window.addEventListener('pointercancel', this.onUp, { passive: false });
 
     scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.destroy());
   }
@@ -156,17 +162,14 @@ export class SwipeInput {
     };
   }
 
+  // NOTE: we do NOT call preventDefault here — scroll/zoom is already suppressed by
+  // touch-action:none on the canvas (index.html), and calling preventDefault on the
+  // window pointer stream stops Phaser's own input (every on-screen button) working.
   private handleDown(e: PointerEvent): void {
     if (this.activeId !== null) return; // already tracking one pointer
     this.activeId = e.pointerId;
-    try {
-      this.canvas.setPointerCapture(e.pointerId);
-    } catch {
-      /* capture is best-effort */
-    }
     this.points = [this.toGame(e)];
     this.handlers.onUpdate('start', this.points);
-    e.preventDefault();
   }
 
   private handleMove(e: PointerEvent): void {
@@ -174,27 +177,20 @@ export class SwipeInput {
     this.points.push(this.toGame(e));
     if (this.points.length > this.maxPoints) this.points.shift();
     this.handlers.onUpdate('move', this.points);
-    e.preventDefault();
   }
 
   private handleUp(e: PointerEvent): void {
     if (e.pointerId !== this.activeId) return;
     this.points.push(this.toGame(e));
-    try {
-      this.canvas.releasePointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
-    }
     this.handlers.onUpdate('end', this.points);
     this.activeId = null;
-    e.preventDefault();
   }
 
   destroy(): void {
     this.canvas.removeEventListener('pointerdown', this.onDown);
-    this.canvas.removeEventListener('pointermove', this.onMove);
-    this.canvas.removeEventListener('pointerup', this.onUp);
-    this.canvas.removeEventListener('pointercancel', this.onUp);
+    window.removeEventListener('pointermove', this.onMove);
+    window.removeEventListener('pointerup', this.onUp);
+    window.removeEventListener('pointercancel', this.onUp);
     this.activeId = null;
   }
 }

@@ -252,6 +252,7 @@ const CPU_KEEPER = {
   // corners thanks to the reach limit). Difficulty is DIRECTIONAL, not timing —
   // the CPU commits on time (it reaches its guess); corners + wrong reads beat it.
   difficulty: 0.5,
+  presets: { easy: 0.25, medium: 0.5, hard: 0.85 }, // the selectable difficulty levels
   // Zone-guess accuracy is lerp(min,max) by difficulty (chance of reading the
   // right column). Kept modest so well-placed corners beat the keeper.
   guessAccuracyMin: 0.25, // column (left/right) read accuracy, lerp by difficulty
@@ -337,7 +338,11 @@ const RESOLUTION = {
 // SESSION (PRD §9) — scoring. (Not wired until Milestone 6.)
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION = {
-  kicksPerSession: 5,
+  kicksPerSession: 5, // penalties per side in regulation (best-of-5)
+  // Taker mode (Phase 3): the AI opponent's 5 kicks are simulated to a tally for
+  // drama — each scores with this probability (tune for a fair, winnable game).
+  opponentScoreChance: 0.68,
+  opponentPaceMs: 650, // pace of one simulated opponent kick (wind-up → result)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
