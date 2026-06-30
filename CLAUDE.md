@@ -149,6 +149,31 @@ src/
 - Dev-only test hooks (under import.meta.env.DEV, stripped from prod): `window.__penalty` = { resolvePenalty, createShootout, recordKick, getState() → {mode,state,diveCaptured}, getShootout(), setMode(m), setKeeperDifficulty(0..1), forceEnd() }, plus `window.__lastResult`/`__lastAim`/`__lastTaker`. Handy for headless verification.
 - **Headless test gotchas (important):** (1) Phaser **GameObject buttons + scene input only fire for REAL/CDP events — use Playwright `page.mouse.*`, NOT `dispatchEvent`.** (2) Our SwipeInput uses raw window listeners, so **swipes** are best driven with `dispatchEvent` PointerEvents on the canvas. (3) Phaser timers run on the rAF/game clock (throttled without a display) while swipe timestamps are wall-clock, so dive-timing numbers look off headless but align on-device — don't "fix" timing based on headless reads. (4) Use the pre-installed Chromium at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome` with `playwright-core`.
 
-## NEXT — Phase 4 (awaiting the owner's phase text). Expected: KEEPER-mode shootout.
-Phases 0–3 are done (Taker mode is a complete, shippable game). Keeper mode EXISTS but currently runs as **free practice** (`runPractice`, no score). The owner referenced "Keeper mode (Phase 4)" and "multiplayer (Phase 6)", so Phase 4 will almost certainly turn Keeper mode into a scored session reusing the **same `game/shootout.ts` machine** (Keeper counts SAVES; the player keeps goal for their turns, the AI takes for the opponent's turns). **Wait for the owner to paste the actual Phase 4 spec before building** — the new plan wins on clashes. Do NOT change `resolvePenalty`, the provider-agnostic kick loop, or re-add pointer capture/preventDefault.
-- ⏸ As always: build only Phase 4, then stop for the owner to playtest. Update this file + HANDOFF.md when done.
+## Integrated take-and-save shootout (Phase 4) — DONE (awaiting owner playtest ⏸).
+The shootout is now a **single alternating take-AND-save game** (owner request, replacing
+Phase 3's simulated opponent). Each turn FLIPS the view: **your turn = taker view** (you
+shoot vs the CPU keeper), **CPU turn = keeper view** (you swipe to DIVE and save the CPU's
+kick). Both turns run through the SAME provider-driven `playKick()`; `result.scored` (did the
+side that kicked score) feeds the unchanged `game/shootout.ts` machine — taker view: you
+scored; keeper view: the CPU scored (you failed to save). **The architecture made this small:**
+no change to `resolvePenalty`, the kick loop, or the shootout machine — just per-turn view
+switching. Key pieces:
+- **`this.mode`** is now the CURRENT view/role (flips each turn); **`sessionKind`** ('shootout'
+  | 'practice') is which game runs. The **MODE button** toggles `sessionKind` (was TAKE/SAVE).
+- **`setView(mode)`** — lightweight per-turn switch (provider swap + camera + rebuild), does
+  NOT restart the session (unlike the old `setMode`). **`setSessionKind`** restarts the loop.
+- **`beginTurn(side)`** — shows "YOUR TURN" / "DEFEND!" + fades through a black overlay
+  (`viewFade`, depth 890) while `setView` rebuilds, so the view change isn't a hard cut.
+- **`runShootout`** now calls `beginTurn` + `playKick` for BOTH sides; the simulated
+  `playOpponentShot` was removed (`SESSION.opponentScoreChance/opponentPaceMs` now legacy).
+- Keeper-mode pieces reused as-is: keeper's-eye layout/camera, `beginKeeperReaction` (tell →
+  strike → dive window), `onDiveSwipe`, `CpuProvider.getTakerInput`. Practice mode kept on the
+  MODE toggle (`runPractice`, unscored, keeper view).
+Verified headless: view flips taker↔keeper per turn, both player + CPU kicks recorded
+(player.taken + opponent.taken advance), dives register, timeScale restored, no errors;
+practice toggle + switches clean. Difficulty button still sets the CPU **keeper** difficulty
+(your taking turns); the CPU **taker** uses CONFIG.CPU_TAKER.
+- ⏸ Stop for owner playtest. Tuning knobs: UI.turnBannerMs/viewFadeMs, KEEPER.* (dive feel),
+  CPU_TAKER.* (how the CPU shoots at you).
+
+## Then — Phase 6 (online 2-player). Still later; the provider-swap keystone holds.

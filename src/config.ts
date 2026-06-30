@@ -339,10 +339,12 @@ const RESOLUTION = {
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION = {
   kicksPerSession: 5, // penalties per side in regulation (best-of-5)
-  // Taker mode (Phase 3): the AI opponent's 5 kicks are simulated to a tally for
-  // drama — each scores with this probability (tune for a fair, winnable game).
+  // LEGACY (unused since the integrated take-and-save shootout): the opponent's
+  // kicks are no longer a simulated dice-roll — you DEFEND them in keeper view, and
+  // the real save/goal result feeds the tally. Kept for reference / a possible
+  // "quick sim" fallback mode.
   opponentScoreChance: 0.68,
-  opponentPaceMs: 650, // pace of one simulated opponent kick (wind-up → result)
+  opponentPaceMs: 650,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -368,7 +370,8 @@ const UI = {
   },
   outcomeHoldMs: 1200, // how long the GOAL/SAVE/MISS banner stays up
   betweenKicksMs: 250, // small beat before the ball resets for the next kick
-  turnBannerMs: 1400, // how long the "YOUR TURN / CPU TURN" break shows between kicks
+  turnBannerMs: 1500, // how long the "YOUR TURN / DEFEND!" break shows between kicks
+  viewFadeMs: 170, // fade-through-black when the shootout switches taker↔keeper view
   goalZoomPeak: 1.3, // banner overshoot scale on a GOAL (celebratory pop)
   // (Net feedback moved from a whole-net shake to a localized NetSim ripple punched
   //  at the ball's entry point — see CONFIG.JUICE.net.)

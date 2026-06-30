@@ -17,7 +17,7 @@
 
 import Phaser from 'phaser';
 import { CONFIG } from '../../config';
-import { ZONE_IDS, zoneRect, zoneCenter, zoneIndices, zoneFrom, type ZoneId } from '../zones';
+import { ZONE_IDS, zoneRect, zoneCenter, type ZoneId } from '../zones';
 import { computeLayout, type Layout } from '../layout';
 import { NetSim } from '../net/NetSim';
 import { computeAim, computeDive, shotOutcome } from '../aim';
@@ -71,7 +71,13 @@ export class GameScene extends Phaser.Scene {
   private sfx = new Sfx();
 
   private state: SceneState = 'aiming';
+  // `mode` is the CURRENT view/role for the kick in progress (taker = you shoot,
+  // keeper = you defend). In the integrated shootout it FLIPS every turn.
   private mode: GameMode = 'taker';
+  // `sessionKind` is what game is running: the full alternating take-and-save
+  // SHOOTOUT, or endless keeper PRACTICE. The MODE button toggles this.
+  private sessionKind: 'shootout' | 'practice' = 'shootout';
+  private viewFade!: Phaser.GameObjects.Rectangle; // black cover for taker↔keeper switches
   private epoch = 0; // bumps on resize / mode switch to invalidate an in-flight kick
   private alive = true;
   private activeResolvers: Array<() => void> = []; // pending awaitable resolvers
@@ -166,10 +172,19 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setVisible(false);
 
-    // Minimal mode toggle (full Splash → Mode-select menu is Milestone 6 / §12).
-    // Lives in the lower thumb zone (PRD §12). Tap, or press "M", to switch.
+    // Black cover used to hide the taker↔keeper rebuild during a shootout turn
+    // switch (depth 890: above the play field + actors, below the banner/HUD).
+    this.viewFade = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x07121c, 1)
+      .setOrigin(0, 0)
+      .setDepth(890)
+      .setScrollFactor(0)
+      .setAlpha(0);
+
+    // Session toggle: the full take-and-save SHOOTOUT vs endless keeper PRACTICE.
+    // Lives in the lower thumb zone. Tap, or press "M", to switch.
     this.modeButton = this.add
-      .text(8, this.scale.height - 8, 'MODE: TAKE', {
+      .text(8, this.scale.height - 8, 'MODE: SHOOTOUT', {
         fontFamily: 'monospace',
         fontSize: '18px',
         color: '#ffffff',
@@ -681,15 +696,37 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ── Session controller ────────────────────────────────────────────────────
-  // Taker mode runs a full SHOOTOUT (Phase 3); Keeper mode stays a free practice
-  // loop (Phase 4 will route it through the same shootout machine). Bumping
-  // `session` makes any running loop exit so a mode switch / play-again is clean.
+  // SHOOTOUT = the full alternating take-and-save game (you shoot, then you defend
+  // the CPU's kick, each turn flipping the view). PRACTICE = endless keeper drills.
+  // Bumping `session` makes any running loop exit so a switch / play-again is clean.
   private startSession(): void {
     this.session++;
     const session = this.session;
     this.hideEndScreen();
-    if (this.mode === 'taker') void this.runShootout(session);
-    else void this.runPractice(session);
+    if (this.sessionKind === 'shootout') {
+      this.setView('taker'); // a shootout always opens on the player's (taker) turn
+      void this.runShootout(session);
+    } else {
+      this.setView('keeper'); // keeper practice is always the defend view
+      void this.runPractice(session);
+    }
+  }
+
+  /** Switch the per-turn VIEW/ROLE: which provider shoots vs defends, the camera/
+   *  layout, and the input routing. Lightweight (rebuild + provider swap) — does NOT
+   *  restart the session, so the shootout loop can flip it every turn. */
+  private setView(mode: GameMode): void {
+    if (this.mode === mode && this.layout) return; // already in this view — no-op
+    this.mode = mode;
+    if (mode === 'taker') {
+      this.takerProvider = this.human; // you shoot
+      this.keeperProvider = this.cpu; //  CPU keeps
+    } else {
+      this.takerProvider = this.cpu; //   CPU shoots
+      this.keeperProvider = this.human; // you defend
+    }
+    this.resetCamera(0);
+    this.rebuild(this.scale.width, this.scale.height);
   }
 
   /** One provider-driven kick (never branches on CPU vs human). Returns the
@@ -729,8 +766,11 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Taker-mode shootout: alternate player / opponent kicks, track score, end
-   *  early when decided, sudden death on a tie, then the end screen (Phase 3). */
+  /** The integrated take-and-save shootout: each turn flips the view — you SHOOT on
+   *  your turn (taker view) and DEFEND the CPU's kick on its turn (keeper view). Both
+   *  go through the same provider-driven playKick(); `result.scored` (did the kicking
+   *  side score) feeds the same shootout machine. Early clinch + sudden death + end
+   *  screen unchanged. */
   private async runShootout(session: number): Promise<void> {
     this.shootout = createShootout(CONFIG.SESSION.kicksPerSession);
     this.setScoreboardVisible(true);
@@ -739,22 +779,18 @@ export class GameScene extends Phaser.Scene {
     while (this.alive && session === this.session && this.shootout.phase !== 'done') {
       try {
         const side: Side | null = this.shootout.next;
-        // A clear "YOUR TURN / CPU TURN" break before each kick so turns don't blur
-        // together (owner: the player→CPU hand-off was happening too fast).
-        if (side) await this.announceTurn(side);
-        if (session !== this.session) return;
-        let scored: boolean;
-        if (side === 'opponent') {
-          scored = await this.playOpponentShot();
-        } else {
-          const r = await this.playKick();
-          if (session !== this.session) return; // mode switch / play again
-          if (!r) continue; // cancelled (resize) → retake the same kick
-          scored = r.scored;
-        }
+        if (!side) break;
+        // Turn break + view switch: "YOUR TURN" (you shoot) / "DEFEND!" (you save).
+        await this.beginTurn(side);
         if (session !== this.session) return;
 
-        this.shootout = recordKick(this.shootout, scored);
+        const r = await this.playKick(); // interactive in BOTH views now
+        if (session !== this.session) return; // session switch / play again
+        if (!r) continue; // cancelled (resize) → retake the same kick
+
+        // result.scored = did the side that just kicked score. Taker view: you.
+        // Keeper view: the CPU (i.e. you failed to save). Same field, both turns.
+        this.shootout = recordKick(this.shootout, r.scored);
         this.updateScoreboard();
         if (this.shootout.phase !== 'done') await this.delayP(CONFIG.UI.betweenKicksMs);
       } catch (e) {
@@ -768,76 +804,37 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** A short, clear "YOUR TURN / CPU TURN" break between kicks so the alternating
-   *  turns don't blur together. Reuses the centred banner; fully completes (and
-   *  hides) before the kick starts, and is abortable on a mode-switch/resize. */
-  private async announceTurn(side: Side): Promise<void> {
+  /** A clear turn break that ALSO switches the view: shows "YOUR TURN" / "DEFEND!",
+   *  fades through black, swaps to the taker (player kick) or keeper (player save)
+   *  view behind the fade, then holds the banner. The fade hides the rebuild so the
+   *  view change isn't a hard cut. Abortable on a session switch / resize. */
+  private async beginTurn(side: Side): Promise<void> {
     const player = side === 'player';
-    const label = player ? 'YOUR TURN' : 'CPU TURN';
-    const color = player ? '#ffffff' : '#ffa726'; // you = white, CPU = amber
+    const fadeMs = CONFIG.UI.viewFadeMs;
     const t = this.outcomeText;
+
+    // Banner up (sits above the fade overlay).
     this.tweens.killTweensOf(t);
-    t.setText(label)
-      .setColor(color)
+    t.setText(player ? 'YOUR TURN' : 'DEFEND!')
+      .setColor(player ? '#ffffff' : '#ffa726')
       .setFontSize(Math.round(Math.min(this.scale.width, this.scale.height) * 0.11) + 'px')
       .setPosition(this.scale.width / 2, this.scale.height * 0.42)
       .setVisible(true)
       .setAlpha(0)
       .setScale(0.8);
     this.tweens.add({ targets: t, alpha: 1, scale: 1, duration: 240, ease: 'Back.easeOut' });
-    await this.delayP(CONFIG.UI.turnBannerMs);
+
+    // Fade to black → switch view → fade back (the rebuild is hidden under black).
+    this.viewFade.setSize(this.scale.width, this.scale.height).setPosition(0, 0);
+    await this.tweenP({ targets: this.viewFade, alpha: 1, duration: fadeMs, ease: 'Quad.easeIn' });
+    this.setView(player ? 'taker' : 'keeper');
+    t.setVisible(true); // (rebuild leaves the top-level banner alone, but be safe)
+    await this.tweenP({ targets: this.viewFade, alpha: 0, duration: fadeMs, ease: 'Quad.easeOut' });
+
+    // Hold the rest of the banner, then clear it for the kick's own banners.
+    await this.delayP(Math.max(0, CONFIG.UI.turnBannerMs - 2 * fadeMs - 240));
     this.tweens.killTweensOf(t);
-    t.setVisible(false).setScale(1).setAlpha(1); // reset for the next outcome banner
-  }
-
-  /** A simulated opponent penalty (Phase 3): outcome by tuned probability, with a
-   *  simple ball + keeper sequence for drama. The player never keeps goal here. */
-  private async playOpponentShot(): Promise<boolean> {
-    this.enterAiming();
-    this.state = 'busy';
-    const goal = this.layout.goal;
-    const scored = Math.random() < CONFIG.SESSION.opponentScoreChance;
-
-    // Pick a target (corners favoured when scoring) and a keeper guess consistent
-    // with the chosen outcome: dive AT the ball to save, the wrong way to concede.
-    const pool: ZoneId[] = scored ? ['TL', 'TR', 'BL', 'BR'] : ['TL', 'TM', 'TR', 'BL', 'BM', 'BR'];
-    const targetZone = pool[Math.floor(Math.random() * pool.length)];
-    const target = zoneCenter(targetZone, goal);
-    const { col, row } = zoneIndices(targetZone);
-    const diveZone = scored ? zoneFrom(col === 1 ? (Math.random() < 0.5 ? 0 : 2) : col === 0 ? 2 : 0, row) : targetZone;
-    const hp = zoneCenter(diveZone, goal);
-
-    const start = { x: this.layout.ball.x, y: this.layout.ball.y };
-    const dur = Phaser.Math.Linear(CONFIG.FLIGHT.flightDurationSlow, CONFIG.FLIGHT.flightDurationFast, 0.6);
-    this.time.delayedCall(CONFIG.CPU_KEEPER.reactionDelay, () => this.diveKeeperTo(hp.x, hp.y, CONFIG.CPU_KEEPER.diveDuration));
-    if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
-    this.debug.setLines(['OPPONENT KICK', 'target ' + targetZone, scored ? '→ scores' : '→ saved']);
-
-    const end = scored ? target : { x: hp.x, y: hp.y };
-    const oppPower = 0.75; // the simulated opponent strikes firmly (drives shake/trail)
-    this.cameraBeat('strike', end); // same strike framing as a player kick (Tier 1)
-    this.hitStop(CONFIG.JUICE.hitStop.strikeMs);
-    this.strikeShake(oppPower);
-    this.burstTurf(start.x, start.y);
-    await this.flyBall(start, end, 0, dur, undefined, undefined, { power: oppPower });
-
-    const C = CONFIG.COLORS;
-    if (scored) {
-      // GOAL against us — ripple + spray the net + celebration framing.
-      const goalRect = this.layout.goal;
-      this.punchNet((target.x - goalRect.x) / goalRect.width, (target.y - goalRect.y) / goalRect.height, oppPower);
-      this.burstNetSpray(end.x, end.y);
-      this.cameraBeat('goal', end);
-    } else {
-      this.hitStop(CONFIG.JUICE.hitStop.saveMs);
-      this.screenShake(CONFIG.JUICE.shake.saveAmt);
-      await this.deflectBall(hp.x, hp.y);
-      this.cameraBeat('save', { x: hp.x, y: hp.y });
-    }
-
-    // For the player, the opponent MISSING is the good news (cheer), scoring is bad.
-    await this.announceOutcome(scored ? 'GOAL' : 'SAVED!', scored ? C.outcomeGoal : C.outcomeSave, !scored, scored);
-    return scored;
+    t.setVisible(false).setScale(1).setAlpha(1);
   }
 
   private makeSeed(): number {
@@ -1002,6 +999,7 @@ export class GameScene extends Phaser.Scene {
     this.rebuild(gameSize.width, gameSize.height);
     this.fx.clear();
     this.outcomeText.setPosition(gameSize.width / 2, gameSize.height * 0.42);
+    this.viewFade?.setSize(gameSize.width, gameSize.height).setPosition(0, 0);
     this.modeButton?.setY(gameSize.height - 8); // keep pinned to the bottom edge
     this.diffButton?.setPosition(gameSize.width - 8, gameSize.height - 8);
     this.layoutSessionUI(gameSize.width, gameSize.height);
@@ -1010,32 +1008,26 @@ export class GameScene extends Phaser.Scene {
     this.showIdleDebug();
   }
 
-  // ── Mode toggle (minimal — full menu is Milestone 6) ──────────────────────
+  // ── Session toggle: full SHOOTOUT vs keeper PRACTICE ──────────────────────
   private toggleMode(): void {
-    this.setMode(this.mode === 'taker' ? 'keeper' : 'taker');
+    this.setSessionKind(this.sessionKind === 'shootout' ? 'practice' : 'shootout');
   }
 
-  private setMode(mode: GameMode): void {
-    this.mode = mode;
-    // Swap which provider is the taker and which is the keeper. THIS is the whole
-    // mode switch — the loop and resolvePenalty are untouched (PRD §8).
-    if (mode === 'taker') {
-      this.takerProvider = this.human; // human shoots
-      this.keeperProvider = this.cpu; // CPU saves
-    } else {
-      this.takerProvider = this.cpu; // CPU shoots
-      this.keeperProvider = this.human; // human saves
-    }
-    this.modeButton.setText('MODE: ' + (mode === 'taker' ? 'TAKE' : 'SAVE'));
-
-    // Tear down any in-flight kick and start a fresh session for the new mode.
+  /** Switch which GAME is running (shootout vs keeper practice) and restart it.
+   *  (The per-turn view is handled by setView inside the loop.) */
+  private setSessionKind(kind: 'shootout' | 'practice'): void {
+    this.sessionKind = kind;
+    this.modeButton.setText('MODE: ' + (kind === 'shootout' ? 'SHOOTOUT' : 'PRACTICE'));
+    // Tear down any in-flight kick and start a fresh session.
     this.epoch++;
     this.human.cancel();
-    this.resetCamera(0); // snap to neutral for the new view
-    // The camera changes with the mode, so rebuild the whole scene for the new view.
-    this.rebuild(this.scale.width, this.scale.height);
-    this.enterAiming();
-    this.startSession(); // Taker → shootout, Keeper → practice (bumps session)
+    this.startSession(); // sets the initial view + runs the chosen loop (bumps session)
+  }
+
+  /** Dev/test hook compatibility: map the old taker/keeper mode to a session kind
+   *  (taker → the take-and-save shootout, keeper → keeper practice). */
+  private setMode(mode: GameMode): void {
+    this.setSessionKind(mode === 'taker' ? 'shootout' : 'practice');
   }
 
   // ── Input router: aim (Taker mode) vs dive (Keeper mode) ──────────────────

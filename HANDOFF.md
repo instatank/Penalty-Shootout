@@ -130,7 +130,16 @@ loop** — reads results only. All knobs in **`CONFIG.JUICE`**.
   Chromium with `--use-gl=swiftshader` to get WebGL (so the post-FX path is exercised).
   Phaser 3.90 camera *post* FX register in `camera.postPipelines`, NOT `postFX.list`.
 
-## What's next — Phase 4 (expected: Keeper-mode shootout)
+## Integrated take-and-save shootout (Phase 4) — DONE, awaiting playtest ⏸
+The shootout now alternates **shoot then defend**: your turn = taker view (shoot vs CPU
+keeper), CPU turn = keeper view (you dive to save the CPU's kick). Both run through the same
+`playKick()`; `result.scored` feeds the unchanged shootout machine. New: `sessionKind`
+(shootout vs keeper practice, on the MODE button), `setView` (lightweight per-turn view swap),
+`beginTurn` ("YOUR TURN"/"DEFEND!" + black-fade view switch). Removed the simulated
+`playOpponentShot`. No change to resolvePenalty / kick loop / shootout machine. Verified
+headless (view flips per turn, both sides' kicks recorded, dives register, no errors).
+
+## (Superseded) earlier Phase-4 expectation
 Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a
 **scored session reusing `game/shootout.ts`** (Keeper counts SAVES; player keeps goal
 on their turns, AI takes on the opponent's turns) with the same scoreboard / end
