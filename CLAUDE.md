@@ -7,6 +7,10 @@ A mobile-first PWA penalty-shootout game that is **responsive in both orientatio
 - **Stage 1 (Milestones 1–7):** complete single-player game, both modes vs CPU.
 - **Stage 2 (Milestone 8):** online 2-player over room codes, added on top with no rewrite.
 
+## Shared playbook (cross-project — read at session start)
+
+The single source of truth for global working rules, transferable lessons, and the ship / verify SOPs is the **`playbook/` folder of `instatank/time-tracker`** (`PLAYBOOK.md` first). Read `/home/user/time-tracker/playbook/PLAYBOOK.md` if that repo is cloned in this environment; otherwise fetch it via GitHub `get_file_contents` (repo `instatank/time-tracker`, path `playbook/PLAYBOOK.md`). Before ending a session that shipped commits, run the **`/wrap`** skill (a Stop hook nudges once if forgotten) — it reconciles `HANDOFF.md` + this file's "Current status" against reality, appends friction cards to `LEARNINGS.md`, and asks the founder the learning questions from `playbook/LEARNING_METHOD.md`. Pre-push ritual = the **`/ship`** skill.
+
 ## Plan re-review (owner, 2026-06-29) — now tracking a phased plan
 The owner is re-reviewing the build against a fresh **phase-wise** plan (inspired by existing apps), replacing the milestone framing going forward. Rule: **on any clash, the new plan wins.** Phases arrive one at a time. Decisions locked so far:
 - **Phase 0 (scaffold & static scene):** already satisfied by M1–M5. Reconciliation decisions — **keep TypeScript** (not the plan's "vanilla JS"; no rewrite, builds/deploys identically); **keep the keeper's-eye camera** for Keeper mode (Taker stays behind-the-taker — the plan's "behind-the-taker everywhere" does NOT override the recent keeper's-eye decision); **portrait-primary** (both orientations supported).
