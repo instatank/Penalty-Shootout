@@ -2,17 +2,22 @@
  * resolve.ts — THE keystone (PRD §7). A single PURE, DETERMINISTIC function
  * decides every save/goal/miss in the game.
  *
- * Model (Phase 2, retimed by design-rework Track A2/A4): GEOMETRIC reach, not a
- * hidden dice roll. The keeper's hands travel from goal centre toward the dive
- * target and RACE the ball: the dive is committed `diveTiming` ms after the
- * strike, the hands need diveTravelMs to fully arrive, and the ball lands after
- * `flightMs` (a harder shot flies faster ⇒ less hand-travel time). The ball is
- * saved if it lands within the reach ellipse around where the hands have
- * ACTUALLY reached at arrival. High power also shrinks reach a touch; the
- * extreme corners sit outside reach (unsaveable). So the outcome matches the
- * visible ball↔keeper interaction: ball meets keeper ⇒ save, ball beats keeper
- * ⇒ goal. A small seeded band at the edge keeps borderline shots lively (and
- * replayable online).
+ * Model (Phase 2, retimed by design-rework Track A2/A4, woodwork added Track A3):
+ * GEOMETRIC reach, not a hidden dice roll. The keeper's hands travel from goal
+ * centre toward the dive target and RACE the ball: the dive is committed
+ * `diveTiming` ms after the strike, the hands need diveTravelMs to fully arrive,
+ * and the ball lands after `flightMs` (a harder shot flies faster ⇒ less
+ * hand-travel time). The ball is saved if it lands within the reach ellipse
+ * around where the hands have ACTUALLY reached at arrival. High power also
+ * shrinks reach a touch; the extreme corners sit outside reach (unsaveable). So
+ * the outcome matches the visible ball↔keeper interaction: ball meets keeper ⇒
+ * save, ball beats keeper ⇒ goal. A small seeded band at the edge keeps
+ * borderline shots lively (and replayable online). A shot landing in the thin
+ * post/crossbar band clangs off the woodwork instead — Track A3 — with a small
+ * seeded chance of deflecting in anyway (still deterministic from the seed).
+ * The keeper's hands position is computed the SAME way for every outcome (goal,
+ * save, post, miss) so a wide/over miss shows the keeper's REAL committed dive
+ * instead of snapping to centre — Track A5.
  *
  * It imports NO Phaser and works in normalised goal coordinates (0..1 across the
  * goal mouth), so it is resolution-independent, trivially testable, and — given
@@ -22,7 +27,7 @@
 import { CONFIG } from '../config';
 import { zoneIndices, type ZoneId } from './zones';
 
-export type Outcome = 'goal' | 'save' | 'miss';
+export type Outcome = 'goal' | 'save' | 'miss' | 'post'; // 'post' = Track A3 — hit the woodwork, stayed out
 
 /** The taker's committed action (PRD §7). */
 export interface TakerInput {
@@ -46,9 +51,10 @@ export interface PenaltyResult {
   outcome: Outcome;
   saved: boolean;
   scored: boolean;
+  hitPost: boolean; // Track A3 — true whether the woodwork hit stayed out ('post') or bounced in ('goal')
   keeperNorm: { x: number; y: number }; // hands position at ball arrival, normalised (drives the visual)
   timingQuality: number; // dive progress 0..1 (1 = hands fully reached the target)
-  reachMargin: number; // ellipse value (≤1 inside reach) — for debug
+  reachMargin: number; // ellipse value (≤1 inside reach) — for debug. NaN for a woodwork hit (the frame decided it, not the reach).
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -115,24 +121,55 @@ export function resolvePenalty(
   flightMs: number, // the kick's flight time (use kickFlightMs — Track A2)
 ): PenaltyResult {
   const R = CONFIG.RESOLUTION;
+  const G = CONFIG.GEOMETRY;
   const center = { x: 0.5, y: 0.5 }; // resting hands position (goal centre)
   const diveTarget = zoneCenterNorm(keeper.diveZone);
-
   const ln = taker.landingNorm;
-  const offGoal = ln.x < 0 || ln.x > 1 || ln.y < 0 || ln.y > 1;
-  if (offGoal) {
-    return { outcome: 'miss', saved: false, scored: false, keeperNorm: center, timingQuality: 0, reachMargin: Infinity };
-  }
 
   // How far the hands have travelled toward the dive target by ball arrival:
   // the time between the dive commit and the ball landing, over a full dive's
   // travel time. Early commits (diveTiming ≤ 0) get the whole flight (Track A4).
+  // Computed UNCONDITIONALLY (Track A5) so every outcome — goal, save, post, or
+  // a genuine wide/over miss — shows the keeper's REAL committed dive instead of
+  // snapping to centre.
   const commitMs = Math.max(0, keeper.diveTiming);
   const diveProgress = clamp((flightMs - commitMs) / R.diveTravelMs, 0, 1);
   const hands = {
     x: center.x + (diveTarget.x - center.x) * diveProgress,
     y: center.y + (diveTarget.y - center.y) * diveProgress,
   };
+
+  // WOODWORK (Track A3): the post/crossbar straddles the goal edge. In pixels
+  // both posts + the crossbar share one thickness (layout.post); in NORMALISED
+  // goal coords that same pixel band is postThicknessFrac tall but only
+  // postThicknessFrac/goalAspect wide (the goal is goalAspect:1), so the two
+  // half-widths differ. A landing inside either post's vertical band or the
+  // crossbar's horizontal band clangs off the frame — regardless of whether it
+  // would otherwise have been a clean goal or a clean miss.
+  const halfPostX = G.postThicknessFrac / G.goalAspect / 2;
+  const halfPostY = G.postThicknessFrac / 2;
+  const nearLeftPost = Math.abs(ln.x - 0) <= halfPostX && ln.y >= -halfPostY && ln.y <= 1 + halfPostY;
+  const nearRightPost = Math.abs(ln.x - 1) <= halfPostX && ln.y >= -halfPostY && ln.y <= 1 + halfPostY;
+  const nearCrossbar = Math.abs(ln.y - 0) <= halfPostY && ln.x >= -halfPostX && ln.x <= 1 + halfPostX;
+  if (nearLeftPost || nearRightPost || nearCrossbar) {
+    // A small seeded chance the woodwork deflects the ball IN rather than out —
+    // still pure/deterministic from the kick seed.
+    const deflectIn = seededRandom(seed, 4) < R.postDeflectInChance;
+    return {
+      outcome: deflectIn ? 'goal' : 'post',
+      saved: false,
+      scored: deflectIn,
+      hitPost: true,
+      keeperNorm: hands,
+      timingQuality: diveProgress,
+      reachMargin: NaN, // the frame decided this, not the keeper's reach
+    };
+  }
+
+  const offGoal = ln.x < 0 || ln.x > 1 || ln.y < 0 || ln.y > 1;
+  if (offGoal) {
+    return { outcome: 'miss', saved: false, scored: false, hitPost: false, keeperNorm: hands, timingQuality: diveProgress, reachMargin: Infinity };
+  }
 
   // A hard shot is fractionally harder to reach/hold (shrinks the reach a touch).
   const reachScale = 1 - taker.power * R.powerReachPenalty;
@@ -158,6 +195,7 @@ export function resolvePenalty(
     outcome: saved ? 'save' : 'goal',
     saved,
     scored: !saved,
+    hitPost: false,
     keeperNorm: hands, // where the hands are judged = the visual dive endpoint
     timingQuality: diveProgress,
     reachMargin: ellipse,

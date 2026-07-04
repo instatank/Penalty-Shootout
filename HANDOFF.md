@@ -1,4 +1,4 @@
-# Handoff — continue the Penalty Shootout build (next: design-rework Tracks A3/A5 + B, then C)
+# Handoff — continue the Penalty Shootout build (next: design-rework Track C on Opus)
 
 Paste the **Prompt block** below into a fresh Claude Code session. Everything under
 it is context for that session. **Source of truth order:** the owner's phased plan
@@ -36,10 +36,9 @@ clashes).
 > plainly. Develop on branch `claude/fable5-design-rework-1avwyo`; commit + push
 > each working step there. Don't open a PR unless I ask.
 >
-> **We are executing `docs/design-rework-plan.md`** (read it in full). Track A's
-> core (A1/A2/A4) is DONE (⏸ owner playtest). Agreed next steps + model
-> assignment: **A3 (woodwork) + A5 (fairness details) + Track B (feedback/feel)
-> on Sonnet, Track C (aesthetic rework) on Opus** — in that order.
+> **We are executing `docs/design-rework-plan.md`** (read it in full). Track A
+> (A1-A5, correctness) and Track B (B1-B7, feedback/feel) are DONE (⏸ owner
+> playtest). Remaining: **Track C (aesthetic rework) on Opus.**
 
 ---
 
@@ -144,10 +143,12 @@ keeper), CPU turn = keeper view (you dive to save the CPU's kick). Both run thro
 `playOpponentShot`. No change to resolvePenalty / kick loop / shootout machine. Verified
 headless (view flips per turn, both sides' kicks recorded, dives register, no errors).
 
-## Design rework — Track A core (A1/A2/A4) — DONE, awaiting playtest ⏸
+## Design rework — Track A + Track B — DONE, awaiting playtest ⏸
 Full plan: `docs/design-rework-plan.md` (audit of every functional flaw + research on
 the best games in the category; Tracks A correctness / B feedback / C aesthetics).
-The Track A core fixed the owner's two worst reports:
+Track A fixed the owner's three worst reports; Track B made every outcome unmistakable.
+
+### Track A core (A1/A2/A4 — Fable)
 - **A2+A4 — THE RACE (one formula):** `resolvePenalty(taker, keeper, seed, flightMs)`
   — `diveTiming` is now "ms after the strike the dive was committed" and
   `diveProgress = clamp((flightMs − commit) / RESOLUTION.diveTravelMs)`. Ball speed
@@ -175,9 +176,79 @@ The Track A core fixed the owner's two worst reports:
   (slow saved vs blasted scored on the same dive; airborne "late" dive = full dive;
   frozen keeper = centre only), live taker kick, live keeper-view kicks with the ball
   ending at the GLOVES on saves / the LANDING on goals, timeScale restored, no errors.
-- **NOT done here (parked for Sonnet):** A3 woodwork, A5 fairness details (CPU reads
-  aimed-not-landed zone, elliptical scatter, `margin` shrink to ≤0.05, resolved-kick
-  survives rotation, end-screen tap guard, miss-dive), Track B, Track C.
+
+### Track A3 + A5 (Sonnet) — the third reported bug + fairness details
+- **A3 — woodwork:** `resolvePenalty` now has a post/crossbar band derived directly
+  from `GEOMETRY.postThicknessFrac`/`goalAspect` (guaranteed to match the drawn frame
+  — no separate duplicate config). A landing in-band → outcome `'post'` (not scored)
+  or, with a small seeded `RESOLUTION.postDeflectInChance` (0.15) chance, a lucky
+  deflection IN (`hitPost: true` + outcome `'goal'`). New `PenaltyResult.hitPost`
+  field. Payoff: `flashWoodwork` (a bright spark at the contact point), `Sfx.postPing`
+  (a metallic clang), `deflectOffPost` (the ball rebounds back toward the pitch, never
+  into the net), a "OFF THE POST!"/"IN OFF THE POST!" banner tier, and a guaranteed
+  slow-mo replay (`isReplayWorthy` now fires on any `hitPost`).
+- **A5 — fairness/detail fixes:**
+  - `resolvePenalty` now computes the keeper's hand position UNCONDITIONALLY (for
+    every outcome, not just save/goal) — a genuine wide/over MISS now shows the
+    keeper's real committed dive instead of snapping to centre (was flaw B4).
+  - `CpuProvider` reads the taker's AIMED zone (`targetZone`), not the post-scatter
+    LANDING zone — scatter can finally wrong-foot the keeper (was flaw B3).
+  - `aim.ts landShot` scatter is now elliptical (vertical component divided by the
+    goal's aspect ratio) so power-shot misses are no longer skewed ~2.6× toward
+    "over the bar" vs wide (was flaw B7).
+  - `RESOLUTION.margin` shrunk 0.18→0.05 — the edge-of-reach coin-flip band is much
+    thinner now that saves/misses/woodwork all read honestly (was flaw B8).
+  - `playKick` now only discards a kick as "cancelled, retake it" if `taker`/`keeper`
+    came back null (no decision made yet); once `resolvePenalty` has actually run, the
+    result is ALWAYS returned even if a resize/mode-switch cuts the presentation
+    short — a rotated phone can no longer silently drop a resolved kick (was flaw B6).
+  - The end-screen "tap anywhere to restart" now only arms after the entrance
+    animation fully completes (`endTapArmed`) — a finger still down from the winning
+    kick can no longer instantly skip the score screen (was flaw B5).
+
+### Track B — feedback & feel (Sonnet), all built on top of the honest Track A model
+- **B1 — catch vs parry:** a save's animation now differs by how comfortable it was
+  (`resolvePenalty`'s `reachMargin`): a central save is a CATCH (squash + hold, no
+  rebound); a stretching reach save is the existing outward PUNCH/PARRY.
+- **B2 — fingertip near-miss:** a goal that only just beat the reach
+  (`reachMargin ≤ JUICE.parry.grazeReachMargin`) still fires a small white spark at
+  the keeper's hands — "so close."
+- **B3 — honest misses:** an over-the-bar shot now keeps sailing away and shrinking
+  into the crowd instead of freezing mid-air; a wide shot gets a firm thud-and-settle
+  squash instead of silently stopping.
+- **B4 — graded goals:** a taker goal into a true corner now shows "TOP CORNER!"
+  (plus a touch of extra screen shake) instead of a generic "GOAL!".
+- **B5 — tension staging:** a brief "held breath" dim rides the CPU taker's existing
+  tell window in keeper view (releases exactly at the strike — adds ZERO latency,
+  and deliberately does NOT touch the human's own taker kick, where any delay would
+  just read as input lag). From sudden death / the last regulation kick, the game
+  goes "high stakes": the resting camera tightens a touch, the vignette deepens (the
+  vignette FX object is now kept as a live-adjustable field), the scoreboard dots
+  pulse, and one soft heartbeat thump plays as a decisive kick begins.
+- **B6 — speed made visible:** the keeper's dive pose now stretches thinner + leans
+  harder the LOWER its judged progress is — a dive that's still falling short of a
+  blasted shot visibly reads as desperate/overreaching, not identical to a dive that
+  comfortably arrived (`diveKeeperTo` gained a `progress` parameter).
+- **B7 — dead time & skip:** the outcome banner hold and the "YOUR TURN"/"DEFEND!"
+  turn banner are now tap-to-skip (`skippableDelay`) — release→launch was already
+  instant.
+- Verified headless (scratchpad `verify-track-a3-b.mjs`): woodwork classification +
+  ~15% deflect-in rate over 400 seeds, miss reports a real (non-centre) keeper dive,
+  scatter is isotropic in normalised coords, end-screen arm-guard (early tap ignored,
+  armed tap restarts), tap-to-skip actually shortens the hold, no console errors.
+- New dev hooks: `landShot`, `scatterRadius`, `getHighStakes()`,
+  `getVignetteStrength()`, `isEndShown()`, `isEndArmed()`.
+- **Verification note (be transparent about this at playtest):** one older regression
+  script (`verify-track-a.mjs`) showed an intermittent large ball-position reading for
+  plain keeper-view goals under rapid scripted dive-swipes. Traced it down to a
+  TEST-HARNESS race (the polling loop occasionally sampled during the *next* kick's
+  ball-reset, and separately one flaky run had the simulated dive-swipe itself fail to
+  register, producing a frozen-keeper result) — not a game defect. Confirmed via (a)
+  100%-passing pure-math checks on `resolvePenalty` itself, (b) a dedicated slower
+  trace script showing the ball holding the exact correct landing position for a full
+  1000ms window before any reset, and (c) the newer dedicated Track A3/B suite (which
+  samples immediately rather than polling) passing consistently across repeated runs.
+  Worth an eye on-device regardless, per the "headless-green ≠ device-acceptable" rule.
 
 ## (Superseded) earlier Phase-4 expectation
 Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a

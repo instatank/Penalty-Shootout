@@ -1,8 +1,8 @@
 # Design Rework — One-Shot Action Plan
 
-**Status: EXECUTING.** Track A core **A1 + A2 + A4 = DONE** (2026-07-04, awaiting
-owner playtest ⏸ — see CLAUDE.md / HANDOFF.md for what landed). Remaining: A3 + A5
-(Sonnet), Track B (Sonnet, after A), Track C (Opus).
+**Status: EXECUTING.** Track A (A1-A5) and Track B (B1-B7) = DONE (2026-07-04,
+awaiting owner playtest ⏸ — see CLAUDE.md / HANDOFF.md for what landed). Remaining:
+Track C (Opus).
 Date: 2026-07-03. Branch: `claude/fable5-design-rework-1avwyo`.
 
 Goal: make the game **aesthetically attractive** and **functionally trustworthy** in one

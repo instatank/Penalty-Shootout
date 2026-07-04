@@ -20,7 +20,7 @@ import { CONFIG } from '../../config';
 import { ZONE_IDS, zoneRect, zoneCenter, type ZoneId } from '../zones';
 import { computeLayout, type Layout } from '../layout';
 import { NetSim } from '../net/NetSim';
-import { computeAim, computeDive, shotOutcome } from '../aim';
+import { computeAim, computeDive, shotOutcome, landShot, scatterRadius } from '../aim';
 import { resolvePenalty, kickFlightMs, type PenaltyResult, type TakerInput, type KeeperInput } from '../resolve';
 import { createShootout, recordKick, currentRound, type ShootoutState, type Side } from '../shootout';
 import { LocalHumanProvider, CpuProvider, type InputProvider, type PenaltyContext } from '../../input/providers';
@@ -101,6 +101,11 @@ export class GameScene extends Phaser.Scene {
   private keeperFlightDone: Promise<void> | null = null;
   private arrivalAt = 0; // wall-clock estimate of ball arrival (keeper view)
 
+  // ── Tension staging (Track B5) ────────────────────────────────────────────
+  private tensionOverlay!: Phaser.GameObjects.Rectangle; // pre-kick "held breath" dim
+  private vignetteFx?: Phaser.FX.Vignette; // live-adjustable once high-stakes hits
+  private highStakes = false; // sudden death / last regulation kick
+
   // ── Shootout session (Phase 3) ────────────────────────────────────────────
   private session = 0; // bumps to stop the running loop (mode switch / play again)
   private shootout: ShootoutState = createShootout(); // Taker-mode score machine
@@ -116,6 +121,8 @@ export class GameScene extends Phaser.Scene {
   private diffNames = ['easy', 'medium', 'hard'] as const;
   private diffIndex = 1; // default medium
   private endShown = false; // true while the end screen is up (tap anywhere → play again)
+  private endTapArmed = false; // Track A5 — only arms once the entrance animation finishes,
+  // so a finger still down from the winning kick can't instantly skip the score (was B5 flaw)
 
   constructor() {
     super('GameScene');
@@ -185,6 +192,16 @@ export class GameScene extends Phaser.Scene {
       .rectangle(0, 0, this.scale.width, this.scale.height, 0x07121c, 1)
       .setOrigin(0, 0)
       .setDepth(890)
+      .setScrollFactor(0)
+      .setAlpha(0);
+
+    // Track B5 — a much lighter dim than viewFade, used only as a "held breath"
+    // cue during the CPU taker's pre-strike tell (never on the human's own kick,
+    // which would just read as input lag). Depth below the banner/HUD.
+    this.tensionOverlay = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 1)
+      .setOrigin(0, 0)
+      .setDepth(690)
       .setScrollFactor(0)
       .setAlpha(0);
 
@@ -262,6 +279,12 @@ export class GameScene extends Phaser.Scene {
         setKeeperDifficulty: (d: number) => {
           this.cpu.difficulty = d;
         },
+        landShot, // Track A5 — expose for headless scatter-distribution checks
+        scatterRadius,
+        getHighStakes: () => this.highStakes, // Track B5
+        getVignetteStrength: () => this.vignetteFx?.strength ?? null,
+        isEndShown: () => this.endShown, // Track A5.5
+        isEndArmed: () => this.endTapArmed,
         forceEnd: () => this.showEndScreen('opponent'), // headless: pop the end screen to test Play Again
       };
     }
@@ -270,7 +293,7 @@ export class GameScene extends Phaser.Scene {
     // (reliable) rather than the button's own hit area — a GameObject created
     // hidden then shown doesn't always re-register for hit testing in Phaser.
     this.input.on('pointerup', () => {
-      if (this.endShown) this.playAgain();
+      if (this.endShown && this.endTapArmed) this.playAgain();
     });
 
     // Input layer (PRD §4). Self-cleans on shutdown.
@@ -364,7 +387,10 @@ export class GameScene extends Phaser.Scene {
   /** Ease (ms>0) or snap (ms<=0) the camera back to the neutral (pulled-back) view. */
   private resetCamera(ms: number): void {
     const cam = this.cameras.main;
-    const base = CONFIG.JUICE.camera.enabled ? CONFIG.JUICE.camera.baseZoom : 1;
+    // High-stakes (Track B5) tightens the resting frame a touch — sudden death
+    // reads as more intense even between kicks.
+    const stakesMult = this.highStakes ? CONFIG.JUICE.tension.suddenDeathZoomMult : 1;
+    const base = CONFIG.JUICE.camera.enabled ? CONFIG.JUICE.camera.baseZoom * stakesMult : 1;
     if (ms <= 0 || !CONFIG.JUICE.camera.enabled) {
       cam.zoomEffect.reset();
       cam.setZoom(base);
@@ -372,6 +398,58 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     cam.zoomTo(base, ms, CONFIG.JUICE.camera.ease, true);
+  }
+
+  // ── Tension staging (Track B5) ────────────────────────────────────────────
+  /** A brief "held breath" dim, timed to release exactly at the strike. Only
+   *  used during the CPU taker's own tell window (keeper view) — never on the
+   *  human's own kick, where any added delay would just read as input lag. */
+  private preKickHush(ms: number): void {
+    if (!CONFIG.JUICE.tension.enabled || ms <= 0) return;
+    this.tensionOverlay.setSize(this.scale.width, this.scale.height).setPosition(0, 0);
+    this.tweens.add({ targets: this.tensionOverlay, alpha: CONFIG.JUICE.tension.hushAlpha, duration: ms * 0.7, ease: 'Sine.easeIn' });
+  }
+
+  private releaseHush(): void {
+    this.tweens.add({ targets: this.tensionOverlay, alpha: 0, duration: 180, ease: 'Sine.easeOut' });
+  }
+
+  /** Tighten the default framing + deepen the vignette + pulse the score dots
+   *  once the shootout reaches its decisive moments (sudden death / the last
+   *  regulation kick). Presentation only — scoring/resolution are untouched. */
+  private setHighStakes(active: boolean): void {
+    if (this.highStakes === active) return;
+    this.highStakes = active;
+    const T = CONFIG.JUICE.tension;
+    if (this.vignetteFx) this.vignetteFx.strength = active ? T.suddenDeathVignette : CONFIG.JUICE.grade.vignetteStrength;
+    if (this.state === 'aiming' || this.state === 'keeping') this.resetCamera(400); // re-frame at the new base zoom
+    this.tweens.killTweensOf(this.scoreDots);
+    if (active) {
+      this.tweens.add({ targets: this.scoreDots, alpha: { from: 1, to: 0.55 }, duration: 520, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    } else {
+      this.scoreDots?.setAlpha(1);
+    }
+  }
+
+  // ── Dead-time / latency audit (Track B7) ──────────────────────────────────
+  /** Like delayP, but a tap anywhere ends it early — used on holds/banners the
+   *  player has already seen the point of (never on the interactive dive/aim
+   *  windows themselves, which are gated separately by scene state). */
+  private skippableDelay(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        this.input.off('pointerdown', onTap);
+        this.removeResolver(finish);
+        resolve();
+      };
+      const onTap = () => finish();
+      this.activeResolvers.push(finish);
+      this.time.delayedCall(ms, finish);
+      this.input.once('pointerdown', onTap);
+    });
   }
 
   // ── Tier 1, item 4: hit-stop ──────────────────────────────────────────────
@@ -539,6 +617,7 @@ export class GameScene extends Phaser.Scene {
   private isReplayWorthy(taker: TakerInput, result: PenaltyResult): boolean {
     const R = CONFIG.JUICE.replay;
     if (!R.enabled) return false;
+    if (result.hitPost) return true; // Track A3 — woodwork moments are always replay-worthy
     if (this.mode === 'keeper') return R.onSaves && result.saved;
     return R.onCornerGoals && result.scored && !!taker.landingZone && CORNER_ZONES.has(taker.landingZone);
   }
@@ -583,14 +662,22 @@ export class GameScene extends Phaser.Scene {
 
     // Re-dive the keeper to the same point, slowed.
     this.time.delayedCall(CONFIG.CPU_KEEPER.reactionDelay * R.slowFactor, () =>
-      this.diveKeeperTo(handX, handY, CONFIG.CPU_KEEPER.diveDuration * R.slowFactor),
+      this.diveKeeperTo(handX, handY, CONFIG.CPU_KEEPER.diveDuration * R.slowFactor, result.timingQuality),
     );
 
     await this.flyBall(start, end, bendPx, slowDur, scaleStart, scaleEnd, { power: taker.power });
     if (!this.replaySkip && epoch === this.epoch) {
       if (result.saved) {
-        await this.deflectBall(handX, handY);
+        await this.settleSave(handX, handY, result.reachMargin);
+      } else if (result.outcome === 'post') {
+        this.flashWoodwork(end);
+        this.sfx.postPing();
+        await this.deflectOffPost(end);
       } else if (result.scored) {
+        if (result.hitPost) {
+          this.flashWoodwork(end);
+          this.sfx.postPing();
+        }
         this.punchNet(taker.landingNorm.x, taker.landingNorm.y, taker.power);
         this.burstNetSpray(end.x, end.y);
       }
@@ -619,7 +706,8 @@ export class GameScene extends Phaser.Scene {
     if (!G.enabled) return;
     if (this.renderer.type !== Phaser.WEBGL) return; // Canvas renderer → graceful no-op
     const fx = this.cameras.main.postFX;
-    if (G.vignetteStrength > 0) fx.addVignette(0.5, 0.5, G.vignetteRadius, G.vignetteStrength);
+    // Kept as a field (Track B5) so setHighStakes can deepen it live in sudden death.
+    if (G.vignetteStrength > 0) this.vignetteFx = fx.addVignette(0.5, 0.5, G.vignetteRadius, G.vignetteStrength);
     if (G.bloomStrength > 0) fx.addBloom(0xffffff, 1, 1, G.bloomBlur, G.bloomStrength); // glows the bright floodlights
     const cm = fx.addColorMatrix();
     cm.brightness(G.brightness, true);
@@ -675,7 +763,20 @@ export class GameScene extends Phaser.Scene {
       ease: 'Quad.easeOut',
       onComplete: () => this.countUpScore(playerScore, oppScore),
     });
-    this.tweens.add({ targets: this.endBtn, scale: 1, alpha: 1, duration: U.endInMs, delay: U.endStaggerMs * 3, ease: 'Back.easeOut' });
+    this.tweens.add({
+      targets: this.endBtn,
+      scale: 1,
+      alpha: 1,
+      duration: U.endInMs,
+      delay: U.endStaggerMs * 3,
+      ease: 'Back.easeOut',
+      // Track A5 — the "tap anywhere" restart only arms once the entrance is
+      // fully in, so a finger still down from the winning kick can't skip the
+      // score screen before the player has even seen it.
+      onComplete: () => {
+        this.endTapArmed = true;
+      },
+    });
   }
 
   private countUpScore(playerScore: number, oppScore: number): void {
@@ -696,6 +797,7 @@ export class GameScene extends Phaser.Scene {
     this.endTitle.setScale(1).setAlpha(1);
     this.endScore.setScale(1).setAlpha(1).setText('FINAL   YOU  ' + s.player.scored + '  –  ' + s.opponent.scored + '  CPU');
     this.endBtn.setScale(1).setAlpha(1);
+    this.endTapArmed = true; // already fully shown — safe to accept a restart tap
   }
 
   private popScore(): void {
@@ -758,10 +860,14 @@ export class GameScene extends Phaser.Scene {
     // while the ball is still in the air and the flight can end honestly.
     const flightMs = kickFlightMs(taker.power, this.mode);
     const result = resolvePenalty(taker, keeper, ctx.seed, flightMs);
+    // From here a DECISION exists (Track A5/B6) — a resize/mode-switch mid-reveal
+    // must only cut the PRESENTATION short (abortAll already fast-forwards any
+    // in-flight tweens/delays harmlessly); the outcome itself must always be
+    // returned so the shootout tally can never silently drop a resolved kick.
     await this.revealKick(taker, keeper, result);
-    if (epoch !== this.epoch) return null;
-    await this.showOutcome(result);
-    // Slow-mo replay of a great moment (Tier 3) — skippable, presentation-only.
+    await this.showOutcome(taker, result);
+    // Slow-mo replay of a great moment (Tier 3) — skippable, presentation-only,
+    // so it's fine to skip entirely if the layout moved on mid-kick.
     if (epoch === this.epoch && this.isReplayWorthy(taker, result)) await this.playReplay(taker, result, epoch);
     return result;
   }
@@ -769,6 +875,7 @@ export class GameScene extends Phaser.Scene {
   /** Keeper-mode (and any free-play) loop: take kicks forever, no score. */
   private async runPractice(session: number): Promise<void> {
     this.setScoreboardVisible(false);
+    this.setHighStakes(false); // practice never runs the sudden-death staging
     while (this.alive && session === this.session) {
       try {
         await this.playKick();
@@ -846,7 +953,8 @@ export class GameScene extends Phaser.Scene {
     await this.tweenP({ targets: this.viewFade, alpha: 0, duration: fadeMs, ease: 'Quad.easeOut' });
 
     // Hold the rest of the banner, then clear it for the kick's own banners.
-    await this.delayP(Math.max(0, CONFIG.UI.turnBannerMs - 2 * fadeMs - 240));
+    // Track B7 — tap anywhere to skip straight to the kick.
+    await this.skippableDelay(Math.max(0, CONFIG.UI.turnBannerMs - 2 * fadeMs - 240));
     this.tweens.killTweensOf(t);
     t.setVisible(false).setScale(1).setAlpha(1);
   }
@@ -921,6 +1029,8 @@ export class GameScene extends Phaser.Scene {
     this.scoreText.setText(str);
     this.scoreSub.setText(s.phase === 'suddenDeath' ? 'SUDDEN DEATH' : 'ROUND ' + Math.min(currentRound(s), s.regulationKicks) + ' / ' + s.regulationKicks);
     this.drawScoreDots();
+    // Track B5 — the decisive stretch: sudden death, or the last regulation kick.
+    this.setHighStakes(s.phase === 'suddenDeath' || (s.phase === 'regulation' && currentRound(s) >= s.regulationKicks));
   }
 
   /** Two rows of kick markers (green = scored, red = missed, outline = pending). */
@@ -952,6 +1062,7 @@ export class GameScene extends Phaser.Scene {
   private showEndScreen(winner: Side): void {
     const s = this.shootout;
     const win = winner === 'player';
+    this.endTapArmed = false; // Track A5 — disarmed until the entrance finishes
     this.endTitle.setText(win ? 'YOU WIN!' : 'YOU LOSE').setColor(win ? '#4caf50' : '#ff7043');
     this.endScore.setText('FINAL   YOU  0  –  0  CPU'); // count-up fills this in
     this.setEndScreenVisible(true);
@@ -1005,6 +1116,7 @@ export class GameScene extends Phaser.Scene {
     this.resetKeeper();
     this.resetTaker();
     this.showIdleDebug();
+    if (this.highStakes) this.sfx.heartbeat(); // Track B5 — one beat as a decisive kick begins
   }
 
   private onResize(gameSize: Phaser.Structs.Size): void {
@@ -1016,6 +1128,7 @@ export class GameScene extends Phaser.Scene {
     this.fx.clear();
     this.outcomeText.setPosition(gameSize.width / 2, gameSize.height * 0.42);
     this.viewFade?.setSize(gameSize.width, gameSize.height).setPosition(0, 0);
+    this.tensionOverlay?.setSize(gameSize.width, gameSize.height).setPosition(0, 0).setAlpha(0);
     this.modeButton?.setY(gameSize.height - 8); // keep pinned to the bottom edge
     this.diffButton?.setPosition(gameSize.width - 8, gameSize.height - 8);
     this.layoutSessionUI(gameSize.width, gameSize.height);
@@ -1149,7 +1262,7 @@ export class GameScene extends Phaser.Scene {
   // dive was submitted mid-flight — Track A1), so we steer its ending to match
   // the result and wait for it to land.
   private async revealKick(taker: TakerInput, keeper: KeeperInput, result: PenaltyResult): Promise<void> {
-    if (this.mode === 'keeper') return this.settleKeeperOutcome(result);
+    if (this.mode === 'keeper') return this.settleKeeperOutcome(taker, result);
     return this.revealTakerKick(taker, keeper, result);
   }
 
@@ -1171,7 +1284,7 @@ export class GameScene extends Phaser.Scene {
     // short, which is precisely what the model judged (Track A2).
     const commitMs = Math.max(0, keeper.diveTiming);
     const diveMs = Phaser.Math.Clamp(dur - commitMs, 120, CONFIG.RESOLUTION.diveTravelMs);
-    this.time.delayedCall(commitMs, () => this.diveKeeperTo(handX, handY, diveMs));
+    this.time.delayedCall(commitMs, () => this.diveKeeperTo(handX, handY, diveMs, result.timingQuality));
 
     // Ball end: a save meets the keeper's gloves; otherwise its landing point.
     const end = result.saved ? { x: handX, y: handY } : taker.landingPoint;
@@ -1201,11 +1314,28 @@ export class GameScene extends Phaser.Scene {
     if (result.saved) {
       this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" as the ball meets the gloves
       this.screenShake(CONFIG.JUICE.shake.saveAmt);
-      await this.deflectBall(handX, handY);
+      await this.settleSave(handX, handY, result.reachMargin); // catch vs punch (Track B1)
+    } else if (result.outcome === 'post') {
+      // OFF THE POST (Track A3) — a firm clang, never a clean goal.
+      this.hitStop(CONFIG.JUICE.hitStop.saveMs * 0.6);
+      this.screenShake(CONFIG.JUICE.shake.saveAmt * 0.8);
+      this.flashWoodwork(end);
+      this.sfx.postPing();
+      if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.saveMs);
+      await this.deflectOffPost(end);
     } else if (result.scored) {
+      if (result.hitPost) {
+        // The rare lucky deflection IN off the frame — still flash + ping first.
+        this.flashWoodwork(end);
+        this.sfx.postPing();
+      } else if (result.reachMargin <= CONFIG.JUICE.parry.grazeReachMargin) {
+        this.burstGraze(handX, handY); // Track B2 — only just beat the reach
+      }
       // GOAL — punch the net + spray off it at the entry point (Tier 1 + 2).
       this.punchNet(taker.landingNorm.x, taker.landingNorm.y, taker.power);
       this.burstNetSpray(end.x, end.y);
+    } else if (result.outcome === 'miss') {
+      await this.settleMiss(taker, end); // Track B3 — never just freeze in empty space
     }
   }
 
@@ -1214,8 +1344,9 @@ export class GameScene extends Phaser.Scene {
   // to the JUDGED hand position (short of the target on a late/rushed dive — the
   // dive you see is the dive that was judged), (b) on a save bend the remaining
   // flight into the gloves so the ball ENDS there — it never lands in the net
-  // first — and (c) wait for the flight to finish before the outcome shows.
-  private async settleKeeperOutcome(result: PenaltyResult): Promise<void> {
+  // first — and (c) wait for the flight to finish before playing the matching
+  // outcome feedback (catch/parry, woodwork, graze, or an honest miss).
+  private async settleKeeperOutcome(taker: TakerInput, result: PenaltyResult): Promise<void> {
     const goal = this.layout.goal;
     const handX = goal.x + result.keeperNorm.x * goal.width;
     const handY = goal.y + result.keeperNorm.y * goal.height;
@@ -1224,7 +1355,7 @@ export class GameScene extends Phaser.Scene {
     // Re-aim the in-progress dive to where the hands were judged to arrive.
     if (this.diveCaptured) {
       this.tweens.killTweensOf(this.keeper);
-      this.diveKeeperTo(handX, handY, Phaser.Math.Clamp(remaining, 120, CONFIG.RESOLUTION.diveTravelMs));
+      this.diveKeeperTo(handX, handY, Phaser.Math.Clamp(remaining, 120, CONFIG.RESOLUTION.diveTravelMs), result.timingQuality);
     }
 
     if (result.saved && this.keeperFlightEnd) {
@@ -1241,10 +1372,26 @@ export class GameScene extends Phaser.Scene {
 
     if (this.keeperFlightDone) await this.keeperFlightDone; // ball arrives
 
+    const end = this.keeperFlightEnd ?? taker.landingPoint;
     if (result.saved) {
       this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" as the ball meets the gloves
       this.screenShake(CONFIG.JUICE.shake.saveAmt); // Tier 2, item 5
-      await this.deflectBall(handX, handY);
+      await this.settleSave(handX, handY, result.reachMargin); // catch vs punch (Track B1)
+    } else if (result.outcome === 'post') {
+      this.hitStop(CONFIG.JUICE.hitStop.saveMs * 0.6);
+      this.screenShake(CONFIG.JUICE.shake.saveAmt * 0.8);
+      this.flashWoodwork(end);
+      this.sfx.postPing();
+      await this.deflectOffPost(end);
+    } else if (result.scored) {
+      if (result.hitPost) {
+        this.flashWoodwork(end);
+        this.sfx.postPing();
+      } else if (result.reachMargin <= CONFIG.JUICE.parry.grazeReachMargin) {
+        this.burstGraze(handX, handY); // Track B2
+      }
+    } else if (result.outcome === 'miss') {
+      await this.settleMiss(taker, end); // Track B3 — the CPU's own shot sailed off target
     }
   }
 
@@ -1284,9 +1431,12 @@ export class GameScene extends Phaser.Scene {
     this.arrivalAt = this.strikeAt + flightMs;
 
     // Ready → tell: lean the striker; open the dive window (early commit allowed).
+    // Also start a brief HUSH (Track B5) that releases right at the strike — a
+    // beat of held breath riding the tell window for free (adds no latency).
     this.time.delayedCall(CONFIG.KEEPER.readyMs, () => {
       this.state = 'keeping';
       this.showTakerTell(tellSide);
+      this.preKickHush(C.tellLeadTime);
       this.debug.setLines(['KEEPER MODE', 'read the striker…', 'swipe to dive']);
     });
 
@@ -1296,6 +1446,7 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(CONFIG.KEEPER.readyMs + C.tellLeadTime, () => {
       this.strikeAt = performance.now(); // the REAL strike moment (Track A4)
       this.arrivalAt = this.strikeAt + flightMs;
+      this.releaseHush();
       this.kickTakerFigure(tellSide);
       if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
       // Camera snap toward the incoming ball + turf flecks at the far spot. NOTE: no
@@ -1379,17 +1530,27 @@ export class GameScene extends Phaser.Scene {
     this.stopBallTrail();
   }
 
-  /** Dive the keeper so its gloves reach (handX, handY), leaning into the dive. */
-  private diveKeeperTo(handX: number, handY: number, durationMs: number): void {
+  /** Dive the keeper so its gloves reach (handX, handY), leaning into the dive.
+   *  `progress` (0..1, from result.timingQuality — Track B6) exaggerates the
+   *  lean + stretches the body thinner the LOWER it is, so a dive that's still
+   *  falling short of a blasted shot visibly reads as desperate/overreaching,
+   *  not identical to a dive that comfortably got there. Defaults to 1 (a
+   *  normal, comfortable dive) for callers that don't know the outcome yet. */
+  private diveKeeperTo(handX: number, handY: number, durationMs: number, progress = 1): void {
     const goal = this.layout.goal;
     const feetY = handY + this.layout.keeper.h * 0.5; // place the body so the gloves cover handY
-    const lean = Phaser.Math.Clamp((handX - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.7;
+    const p = Phaser.Math.Clamp(progress, 0, 1);
+    const baseLean = Phaser.Math.Clamp((handX - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.7;
+    const lean = baseLean * Phaser.Math.Linear(1.15, 1.0, p);
+    const stretch = Phaser.Math.Linear(1.18, 1.0, p); // low progress = a thinner, over-stretched reach
     const groundY = this.layout.keeper.feetY;
     this.tweens.add({
       targets: this.keeper,
       x: handX,
       y: feetY,
       rotation: lean,
+      scaleX: 1 / stretch,
+      scaleY: stretch,
       duration: durationMs,
       ease: 'Quad.easeOut',
       onComplete: () => this.burstDust(handX, groundY), // dust puff on landing (Tier 2)
@@ -1413,6 +1574,91 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** A save's ANIMATION language differs by how comfortable it was (Track B1).
+   *  By the time this runs the ball has already flown to (handX, handY) — a
+   *  CENTRAL save (small reachMargin) reads as a CATCH: squash + hold, no
+   *  rebound. A stretching REACH save (reachMargin near the edge of the reach
+   *  ellipse) reads as a PUNCH/PARRY: the existing outward deflect. */
+  private async settleSave(handX: number, handY: number, reachMargin: number): Promise<void> {
+    const P = CONFIG.JUICE.parry;
+    if (reachMargin <= P.catchReachMargin) {
+      const sx = this.ball.scaleX;
+      const sy = this.ball.scaleY;
+      await this.tweenP({
+        targets: this.ball,
+        scaleX: sx * P.catchSquashX,
+        scaleY: sy * P.catchSquashY,
+        duration: P.catchMs / 2,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+      });
+    } else {
+      await this.deflectBall(handX, handY);
+    }
+  }
+
+  /** Track B2 — a goal that only just beat the keeper's reach still shows a
+   *  small fingertip-graze spark (reuses the white net-spray texture/emitter). */
+  private burstGraze(x: number, y: number): void {
+    if (CONFIG.JUICE.particles.enabled) this.sprayEmitter.explode(CONFIG.JUICE.particles.grazeCount, x, y);
+  }
+
+  /** Track A3 — a bright spark exactly at the post/crossbar contact point. */
+  private flashWoodwork(contact: { x: number; y: number }): void {
+    const g = this.add.graphics().setDepth(420); // above the ball (400) and keeper-view keeper (410)
+    const r = Math.max(10, this.layout.ball.r * 1.2);
+    g.fillStyle(CONFIG.COLORS.woodworkFlash, 0.9);
+    g.fillCircle(contact.x, contact.y, r);
+    this.tweens.add({ targets: g, alpha: 0, duration: 220, ease: 'Quad.easeOut', onComplete: () => g.destroy() });
+  }
+
+  /** Track A3 — the ball cannons back off the frame toward the pitch (never
+   *  into the net first). Direction is a simple nudge back toward the middle
+   *  of the goal plus a drop away from the frame; `awayFromCamera` flips the
+   *  drop for the keeper's-eye view (the woodwork is behind/around you there). */
+  private deflectOffPost(contact: { x: number; y: number }): Promise<void> {
+    const goal = this.layout.goal;
+    const towardCenter = contact.x < goal.x + goal.width / 2 ? 1 : -1;
+    const awayFromCamera = this.mode === 'keeper';
+    return this.tweenP({
+      targets: this.ball,
+      x: contact.x + towardCenter * goal.width * 0.06,
+      y: contact.y + (awayFromCamera ? -goal.height * 0.22 : goal.height * 0.3),
+      duration: 220,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  /** Track B3 — a miss never just freezes in empty space: an over-the-bar shot
+   *  keeps sailing away into the crowd (shrinking); a wide shot thuds to a stop
+   *  against the hoarding (a firm squash-and-settle, not a silent freeze). */
+  private async settleMiss(taker: TakerInput, contact: { x: number; y: number }): Promise<void> {
+    const M = CONFIG.JUICE.miss;
+    const shot = shotOutcome(taker.landingNorm);
+    if (shot === 'over') {
+      const dy = -this.scale.height * M.overExtraFrac;
+      const side = taker.landingNorm.x - 0.5 >= 0 ? 1 : -1;
+      await this.tweenP({
+        targets: this.ball,
+        x: contact.x + side * this.scale.width * 0.04,
+        y: contact.y + dy,
+        scaleX: this.ball.scaleX * M.overShrinkTo,
+        scaleY: this.ball.scaleY * M.overShrinkTo,
+        duration: M.overMs,
+        ease: 'Quad.easeIn',
+      });
+    } else {
+      await this.tweenP({
+        targets: this.ball,
+        scaleX: this.ball.scaleX * 1.1,
+        scaleY: this.ball.scaleY * 0.85,
+        duration: M.wideThudMs,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+      });
+    }
+  }
+
   /** The pre-strike tell: lean the striker toward the shot side (PRD §6). The
    *  lean is scaled by tellStrength so it stays subtle. */
   private showTakerTell(side: number): void {
@@ -1427,36 +1673,55 @@ export class GameScene extends Phaser.Scene {
   }
 
   // Player-kick outcome → reuses announceOutcome with the mode's win meaning.
-  private async showOutcome(result: PenaltyResult): Promise<void> {
+  private async showOutcome(taker: TakerInput, result: PenaltyResult): Promise<void> {
     if (import.meta.env.DEV) (window as unknown as { __lastResult?: unknown }).__lastResult = result;
     const keeperView = this.mode === 'keeper';
+    // Track B4 — a taker goal struck into a true corner gets its own tier: extra
+    // emphasis, not just "GOAL!" again. (Keeper view has no equivalent — a CPU
+    // corner just means you didn't reach it, already covered by "CONCEDED".)
+    const isCornerGoal =
+      !keeperView && result.outcome === 'goal' && !result.hitPost && !!taker.landingZone && CORNER_ZONES.has(taker.landingZone);
+
     // Banner + colour from the PLAYER's perspective (Track A1): in keeper view a
     // conceded goal must never show as a green celebratory "GOAL!" — your save is
     // the green one, a concession is the red one, a CPU spray is your let-off.
+    // Track A3 adds the woodwork tiers: a clean "OFF THE POST!" when it stays
+    // out, or "IN OFF THE POST!" on the rare lucky deflection.
     const label =
-      result.outcome === 'goal'
+      result.hitPost && result.outcome === 'goal'
         ? keeperView
-          ? 'CONCEDED'
-          : 'GOAL!'
-        : result.outcome === 'save'
-          ? 'SAVED!'
-          : keeperView
-            ? 'WIDE!'
-            : 'MISS!';
+          ? 'IN OFF THE POST...'
+          : 'IN OFF THE POST!'
+        : result.outcome === 'post'
+          ? 'OFF THE POST!'
+          : result.outcome === 'goal'
+            ? keeperView
+              ? 'CONCEDED'
+              : isCornerGoal
+                ? 'TOP CORNER!'
+                : 'GOAL!'
+            : result.outcome === 'save'
+              ? 'SAVED!'
+              : keeperView
+                ? 'WIDE!'
+                : 'MISS!';
     // Whether the PLAYER won this kick: as taker only a goal is; as keeper any
-    // non-goal (a save, or the CPU missing) went your way.
+    // non-goal (a save, a post, or the CPU missing) went your way.
     const playerWon = keeperView ? !result.scored : result.scored;
     const color =
-      result.outcome === 'miss'
-        ? CONFIG.COLORS.outcomeMiss
-        : playerWon
-          ? CONFIG.COLORS.outcomeGoal
-          : CONFIG.COLORS.outcomeSave;
+      result.outcome === 'post'
+        ? CONFIG.COLORS.outcomePost
+        : result.outcome === 'miss'
+          ? CONFIG.COLORS.outcomeMiss
+          : playerWon
+            ? CONFIG.COLORS.outcomeGoal
+            : CONFIG.COLORS.outcomeSave;
 
     // Outcome framing (Tier 1, item 3): celebrate a goal on the net, favour the
     // keeper on a save, then ease back to neutral on the next enterAiming.
     if (result.scored) this.cameraBeat('goal', { x: this.ball.x, y: this.ball.y });
     else if (result.saved) this.cameraBeat('save', { x: this.keeper.x, y: this.keeper.y });
+    if (isCornerGoal) this.screenShake(CONFIG.JUICE.shake.saveAmt); // Track B4 — a little extra emphasis
 
     if (CONFIG.HAPTICS.enabled) {
       const ms = result.saved ? CONFIG.HAPTICS.saveMs : result.scored ? CONFIG.HAPTICS.goalMs : 0;
@@ -1495,7 +1760,7 @@ export class GameScene extends Phaser.Scene {
       },
     });
 
-    await this.delayP(CONFIG.UI.outcomeHoldMs);
+    await this.skippableDelay(CONFIG.UI.outcomeHoldMs); // Track B7 — tap anywhere to move on
     this.outcomeText.setVisible(false);
   }
 
@@ -1692,7 +1957,7 @@ export class GameScene extends Phaser.Scene {
   private resetKeeper(): void {
     const k = this.layout.keeper;
     this.drawKeeperGraphic(k.w, k.h);
-    this.keeper.setRotation(0).setPosition(k.x, k.feetY);
+    this.keeper.setRotation(0).setScale(1).setPosition(k.x, k.feetY); // clear any Track B6 dive stretch
     this.positionActorShadow(this.keeperShadow, k.x, k.feetY, k.w);
   }
 

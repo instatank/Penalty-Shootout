@@ -138,7 +138,11 @@ export class CpuProvider implements InputProvider {
     // READ. Difficulty is directional: the CPU commits on time (below), so it is
     // beaten by a wrong read or a true corner, not by fumbled timing (Phase 2).
     const acc = k.guessAccuracyMin + (k.guessAccuracyMax - k.guessAccuracyMin) * difficulty;
-    const aim = taker.landingZone ?? taker.targetZone ?? 'BM';
+    // Track A5: read the taker's AIMED (intended) zone, not the post-scatter
+    // landing zone. Reading the landing zone let the keeper "see" exactly where
+    // the ball would end up regardless of scatter — a lucky/unlucky scatter
+    // could never wrong-foot it, undermining the whole power/accuracy tradeoff.
+    const aim = taker.targetZone ?? taker.landingZone ?? 'BM';
     const { col, row } = zoneIndices(aim);
 
     let guessCol: number;

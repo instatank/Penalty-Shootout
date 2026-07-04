@@ -84,6 +84,8 @@ const COLORS = {
   outcomeGoal: 0x4caf50, // GOAL
   outcomeSave: 0xff7043, // SAVE
   outcomeMiss: 0x90a4ae, // MISS
+  outcomePost: 0xffca28, // OFF THE POST! (Track A3) — neither a clean goal nor a save
+  woodworkFlash: 0xffffff, // the frame-flash spark on a post/crossbar hit
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -347,7 +349,14 @@ const RESOLUTION = {
   // always "get there" regardless of shot speed.)
   diveTravelMs: 420, // hands' travel time centre → dive target (a full dive)
   powerReachPenalty: 0.2, // a hard shot ALSO shrinks reach by up to this (× power)
-  margin: 0.18, // soft save/goal band at the very edge of reach (seeded tie-break)
+  margin: 0.05, // soft save/goal band at the very edge of reach (seeded tie-break).
+  // Shrunk from 0.18 (Track A5) — now that saves/misses/woodwork all read
+  // honestly, a wide hidden coin-flip band was the last "I can't tell why that
+  // resolved that way" gap; a thin band still keeps edge-of-reach shots lively.
+  postDeflectInChance: 0.15, // Track A3 — a shot that clangs off the woodwork has
+  // this small seeded chance of deflecting IN rather than staying out (still
+  // pure/deterministic from the kick seed — real shootouts occasionally get this
+  // lucky bounce; the frame flash + ping fires either way, see GameScene).
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -492,6 +501,7 @@ const JUICE = {
     netSprayCount: 18, // spray off the net on a goal
     dustCount: 10, // dust puff where a keeper lands a dive
     confettiCount: 90, // confetti on a match win (one-shot)
+    grazeCount: 6, // Track B2 — small white spark when a goal only just beats the reach
     turfColors: [0x2f7d33, 0x276b2c, 0x3a8f3f], // grass greens
     dustColor: 0xddcca8, // pale turf dust
     sprayColor: 0xffffff, // white net spray
@@ -558,6 +568,44 @@ const JUICE = {
     countUpMs: 650, // final-score count-up duration
     scorePopScale: 1.18, // scoreboard pop scale when the score changes
     scorePopMs: 260,
+  },
+
+  // ── 11. Keeper parry/catch language (Track B1) ───────────────────────────
+  // A save's ANIMATION differs by how comfortable it was: a central save is a
+  // CATCH (squash + hold, no rebound); a stretching reach save is a PUNCH/PARRY
+  // (the existing outward deflect). Read from resolvePenalty's `reachMargin`
+  // (≤1 = inside reach; smaller = more central/comfortable).
+  parry: {
+    catchReachMargin: 0.45, // ellipse value at/below which a save reads as a catch
+    catchSquashX: 1.16, // ball squash on catching (wider)
+    catchSquashY: 0.82, // ...and flatter
+    catchMs: 160, // squash + recover duration
+    grazeReachMargin: 1.5, // Track B2 — a GOAL this close to reach still shows a
+    // fingertip graze (small spark) even though it wasn't saved
+  },
+
+  // ── 12. Honest misses (Track B3) ─────────────────────────────────────────
+  // A miss never just freezes in empty space: an over-the-bar shot keeps sailing
+  // away into the crowd (shrinking); a wide shot thuds to a stop against the
+  // hoarding (a firm squash, not a silent freeze).
+  miss: {
+    overExtraFrac: 0.35, // extra travel (fraction of screen height) as it sails away
+    overShrinkTo: 0.4, // ball scale multiplier as it vanishes into the stands
+    overMs: 260,
+    wideThudMs: 140,
+  },
+
+  // ── 13. Tension staging (Track B5) ───────────────────────────────────────
+  // Presentation-only contrast so the payoff moments hit harder. The pre-kick
+  // hush rides the CPU taker's existing tell window in keeper view (adds zero
+  // extra latency — no hush on the human's OWN taker kick, which would just
+  // read as input lag). High-stakes (sudden death / the last regulation kick)
+  // tightens the default framing + deepens the vignette + pulses the score dots.
+  tension: {
+    enabled: true,
+    hushAlpha: 0.16, // pre-kick dim overlay during the CPU's tell (keeper view only)
+    suddenDeathZoomMult: 0.94, // × the normal baseZoom once it's high-stakes
+    suddenDeathVignette: 0.4, // deeper edge darkening once it's high-stakes
   },
 } as const;
 

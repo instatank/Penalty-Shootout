@@ -183,6 +183,18 @@ practice toggle + switches clean. Difficulty button still sets the CPU **keeper*
 ## Design rework (owner request 2026-07-04) — plan: `docs/design-rework-plan.md`
 Full audit + category research → Tracks **A correctness / B feedback / C aesthetics**.
 Agreed model split: Track A core on Fable, A3/A5 + Track B on Sonnet, Track C on Opus.
+- **Track A (A1-A5) + Track B (B1-B7): DONE (awaiting owner playtest ⏸).** Full detail
+  in HANDOFF.md. Track A also fixed the third reported bug (posts/crossbar now exist —
+  a landing in the woodwork band clangs off the frame, "post" outcome, 15% seeded
+  lucky deflect-in) and four fairness details (keeper reads aimed-not-landed zone,
+  elliptical scatter, tighter margin, a resize can no longer silently drop a resolved
+  kick, end-screen tap-guard). Track B made every outcome unmistakable: catch vs
+  parry saves, a fingertip-graze spark on close goals, honest miss trajectories
+  (sails into the crowd / thuds wide), a "TOP CORNER!" tier, sudden-death tension
+  staging (tighter camera + deeper vignette + heartbeat), keeper poses that visibly
+  strain when beaten by pace, and tap-to-skip on every hold. Verified headless
+  (14 + 14 checks); one legacy test script's residual flakiness was traced to a
+  test-harness timing race, not a game defect (see HANDOFF.md).
 - **Track A core (A1/A2/A4): DONE (awaiting owner playtest ⏸).**
   - **A2+A4 — the race:** `resolvePenalty(taker, keeper, seed, flightMs)` — `diveTiming`
     = ms after the strike the dive was committed; `diveProgress = clamp((flightMs −
@@ -210,7 +222,6 @@ Agreed model split: Track A core on Fable, A3/A5 + Track B on Sonnet, Track C on
     gloves on saves / landing on goals; timeScale restored; no errors).
   - ⏸ Playtest knobs: RESOLUTION.diveTravelMs / powerReachPenalty, CPU_KEEPER.
     reactionDelay, CPU_TAKER.flightTimeSlow/Fast, FLIGHT.flightDurationSlow/Fast.
-- **Next:** A3 (woodwork) + A5 (fairness details) + Track B on Sonnet, then Track C on
-  Opus. See the plan doc §Part 3 and HANDOFF.md.
+- **Next:** Track C (aesthetic rework) on Opus. See the plan doc §Part 3 and HANDOFF.md.
 
 ## Then — Phase 6 (online 2-player). Still later; the provider-swap keystone holds.

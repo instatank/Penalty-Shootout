@@ -95,7 +95,14 @@ export function landShot(
 ): TakerInput {
   const ang = seededRandom(seed, 1) * Math.PI * 2;
   const rad = Math.sqrt(seededRandom(seed, 2)) * errorRadius; // uniform over the disc
-  const landingPoint = { x: targetX + Math.cos(ang) * rad, y: targetY + Math.sin(ang) * rad };
+  // Track A5/B7: errorRadius is authored as a fraction of goal WIDTH, but the
+  // goal is goalAspect:1 (wide) — a circular scatter in raw pixels therefore
+  // covers a much bigger fraction of the (shorter) HEIGHT than of the width, so
+  // power shots skied over the bar far more than they went wide. Shrink the
+  // vertical component by goalAspect so the scatter is isotropic in NORMALISED
+  // goal coords (equal miss chance high/low as left/right).
+  const aspect = goal.width / goal.height;
+  const landingPoint = { x: targetX + Math.cos(ang) * rad, y: targetY + (Math.sin(ang) * rad) / aspect };
   const landingZone = zoneAtPoint(landingPoint.x, landingPoint.y, goal);
   const landingNorm = {
     x: (landingPoint.x - goal.x) / goal.width,

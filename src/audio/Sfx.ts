@@ -78,6 +78,62 @@ export class Sfx {
     o.stop(t0 + 0.55);
   }
 
+  /** A sharp metallic "clang" for a shot that hits the post/crossbar (Track A3):
+   *  two closely-detuned tones with a fast decay, plus a brief noise transient
+   *  for the impact texture. */
+  postPing(): void {
+    if (!CONFIG.SOUND.enabled || !this.ctx || !this.master) return;
+    const t0 = this.ctx.currentTime;
+    const ctx = this.ctx;
+    const master = this.master;
+
+    [1400, 2100].forEach((freq, i) => {
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(freq, t0);
+      o.frequency.exponentialRampToValueAtTime(freq * 0.6, t0 + 0.18);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(i === 0 ? 0.25 : 0.14, t0 + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+      o.connect(g).connect(master);
+      o.start(t0);
+      o.stop(t0 + 0.22);
+    });
+
+    const n = this.noiseSource(0.06);
+    if (n) {
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 2000;
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.3, t0);
+      ng.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.05);
+      n.connect(hp).connect(ng).connect(master);
+      n.start(t0);
+      n.stop(t0 + 0.06);
+    }
+  }
+
+  /** A single soft low thump (Track B5) — one beat of tension as a decisive
+   *  (sudden-death / last-kick) attempt begins. Not a looping heartbeat, just
+   *  one honest pulse; a real loop would need a continuous ambient bed we don't
+   *  have yet. */
+  heartbeat(): void {
+    if (!CONFIG.SOUND.enabled || !this.ctx || !this.master) return;
+    const t0 = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(60, t0);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.35, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+    o.connect(g).connect(this.master);
+    o.start(t0);
+    o.stop(t0 + 0.22);
+  }
+
   /** Disappointed "ohh" for a save or miss. */
   groan(): void {
     if (!CONFIG.SOUND.enabled || !this.ctx || !this.master) return;
