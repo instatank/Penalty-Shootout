@@ -21,7 +21,7 @@ import { ZONE_IDS, zoneRect, zoneCenter, type ZoneId } from '../zones';
 import { computeLayout, type Layout } from '../layout';
 import { NetSim } from '../net/NetSim';
 import { computeAim, computeDive, shotOutcome } from '../aim';
-import { resolvePenalty, type PenaltyResult, type TakerInput, type KeeperInput } from '../resolve';
+import { resolvePenalty, kickFlightMs, type PenaltyResult, type TakerInput, type KeeperInput } from '../resolve';
 import { createShootout, recordKick, currentRound, type ShootoutState, type Side } from '../shootout';
 import { LocalHumanProvider, CpuProvider, type InputProvider, type PenaltyContext } from '../../input/providers';
 import { SwipeInput, deriveSwipe, type SwipePhase, type SwipePoint } from '../../input/SwipeInput';
@@ -93,6 +93,13 @@ export class GameScene extends Phaser.Scene {
   // dive the human committed this window (null until they flick).
   private strikeAt = 0;
   private diveCaptured: { zone: ZoneId; timing: number } | null = null;
+  // Keeper-view flight bookkeeping (Track A1): the flight's END is a mutable
+  // point so a mid-flight save can bend the last stretch into the gloves (the
+  // ball must END where the save happens, never land in the net first), and the
+  // flight promise lets the outcome settle exactly when the ball arrives.
+  private keeperFlightEnd: { x: number; y: number } | null = null;
+  private keeperFlightDone: Promise<void> | null = null;
+  private arrivalAt = 0; // wall-clock estimate of ball arrival (keeper view)
 
   // ── Shootout session (Phase 3) ────────────────────────────────────────────
   private session = 0; // bumps to stop the running loop (mode switch / play again)
@@ -228,7 +235,10 @@ export class GameScene extends Phaser.Scene {
     // Dev-only hook for headless tests (stripped from production).
     if (import.meta.env.DEV) {
       (window as unknown as Record<string, unknown>).__penalty = {
-        resolvePenalty,
+        resolvePenalty, // NOTE: takes (taker, keeper, seed, flightMs) since Track A2
+        kickFlightMs,
+        getBallPos: () => ({ x: this.ball.x, y: this.ball.y }),
+        getGoalRect: () => ({ ...this.layout.goal }),
         createShootout,
         recordKick, // expose the pure shootout logic for headless unit tests
         getState: () => ({ mode: this.mode, state: this.state, diveCaptured: this.diveCaptured }),
@@ -565,9 +575,8 @@ export class GameScene extends Phaser.Scene {
     this.cameraReplay(focus);
 
     // Slowed durations (re-simulation, NOT timeScale — keeps hit-stop isolated).
-    const baseDur = keeperMode
-      ? CONFIG.CPU_TAKER.flightTime
-      : Phaser.Math.Linear(CONFIG.FLIGHT.flightDurationSlow, CONFIG.FLIGHT.flightDurationFast, taker.power);
+    // Same shared flight-time source as the live kick (Track A2).
+    const baseDur = kickFlightMs(taker.power, keeperMode ? 'keeper' : 'taker');
     const slowDur = baseDur * R.slowFactor;
     const scaleStart = keeperMode ? CONFIG.KEEPER.flightScaleStart : CONFIG.FLIGHT.scaleStart;
     const scaleEnd = keeperMode ? CONFIG.KEEPER.flightScaleEnd : CONFIG.FLIGHT.scaleEnd;
@@ -743,7 +752,12 @@ export class GameScene extends Phaser.Scene {
     const keeper = await this.keeperProvider.getKeeperInput(ctx, taker).catch(() => null);
     if (!keeper || epoch !== this.epoch) return null;
 
-    const result = resolvePenalty(taker, keeper, ctx.seed);
+    // The kick's flight time comes from ONE shared, pure source (Track A2) so the
+    // ball you see and the race the model judges are the same thing. In keeper
+    // view the human's dive is submitted MID-flight (Track A1), so this resolves
+    // while the ball is still in the air and the flight can end honestly.
+    const flightMs = kickFlightMs(taker.power, this.mode);
+    const result = resolvePenalty(taker, keeper, ctx.seed, flightMs);
     await this.revealKick(taker, keeper, result);
     if (epoch !== this.epoch) return null;
     await this.showOutcome(result);
@@ -978,6 +992,8 @@ export class GameScene extends Phaser.Scene {
     this.abortAll();
     this.state = 'aiming';
     this.diveCaptured = null;
+    this.keeperFlightEnd = null;
+    this.keeperFlightDone = null;
     this.fx.clear();
     this.hidePowerMeter();
     this.outcomeText.setVisible(false);
@@ -1051,23 +1067,31 @@ export class GameScene extends Phaser.Scene {
     const sample = deriveSwipe(points, this.scale.height);
     const zone = computeDive(sample, this.scale.width, this.scale.height);
 
-    // Timing: how far the dive's start was from the "perfect" moment. The strike
-    // is the reference; idealReactMs is the human-reaction sweet spot after it.
-    // resolvePenalty reads diveTiming where 0 = perfect (PRD §7).
+    // Timing (Track A4): the raw ms between the strike and the flick's START.
+    // resolvePenalty races this against the ball's flight — committing while the
+    // ball still has ≥ diveTravelMs of air time = the hands fully arrive; later
+    // commits get proportionally less far. Early (negative) = locked in, full dive.
     const sinceStrike = sample.start.t - this.strikeAt;
-    const diveTiming = sinceStrike - CONFIG.KEEPER.idealReactMs;
-    this.diveCaptured = { zone, timing: diveTiming };
+    this.diveCaptured = { zone, timing: sinceStrike };
 
-    // Dive the keeper to the chosen zone NOW (the human sees their reaction). The
-    // window still closes on its timer, so the full flight plays out either way.
+    // Dive the keeper toward the chosen zone NOW (instant feedback). When the
+    // result lands (moments later), settleKeeperOutcome re-aims this dive to the
+    // JUDGED hand position, so what completes is what was judged (Track A1).
     const hp = zoneCenter(zone, this.layout.goal);
     this.diveKeeperTo(hp.x, hp.y, CONFIG.KEEPER.diveDuration);
+
+    // Commit the dive to the loop IMMEDIATELY (mid-flight) so the kick resolves
+    // while the ball is in the air and the flight can end honestly — gloves on a
+    // save, net on a goal (Track A1). Pre-strike commits are held and submitted
+    // by the strike callback (the race doesn't exist yet).
+    if (sinceStrike >= 0 && this.human.isAwaitingKeeper()) {
+      this.human.submitDive(zone, sinceStrike);
+    }
 
     this.debug.setLines([
       'DIVE',
       'zone ' + zone + (sinceStrike < 0 ? '   (early commit)' : ''),
       'since strike ' + Math.round(sinceStrike) + 'ms',
-      'timing off ' + Math.round(diveTiming) + 'ms',
     ]);
   }
 
@@ -1121,8 +1145,9 @@ export class GameScene extends Phaser.Scene {
   // ── Reveal the outcome ────────────────────────────────────────────────────
   // One entry point for the loop; the presentation differs by MODE (not by who
   // produced the input — the loop stays provider-agnostic). In Taker mode the
-  // flight is the reveal; in Keeper mode the flight already played during the
-  // human's reaction, so we only settle the result.
+  // flight is the reveal; in Keeper mode the flight is ALREADY IN THE AIR (the
+  // dive was submitted mid-flight — Track A1), so we steer its ending to match
+  // the result and wait for it to land.
   private async revealKick(taker: TakerInput, keeper: KeeperInput, result: PenaltyResult): Promise<void> {
     if (this.mode === 'keeper') return this.settleKeeperOutcome(result);
     return this.revealTakerKick(taker, keeper, result);
@@ -1136,10 +1161,17 @@ export class GameScene extends Phaser.Scene {
     const handX = goal.x + result.keeperNorm.x * goal.width;
     const handY = goal.y + result.keeperNorm.y * goal.height;
 
-    // CPU keeper dives after its reaction delay (it is reacting to the shot).
-    this.time.delayedCall(CONFIG.CPU_KEEPER.reactionDelay, () =>
-      this.diveKeeperTo(handX, handY, CONFIG.CPU_KEEPER.diveDuration),
-    );
+    // Higher power = faster ball travel (Phase 1) — the SAME flight time the
+    // resolution raced the dive against (Track A2).
+    const dur = kickFlightMs(taker.power, 'taker');
+
+    // The CPU keeper's dive starts when it COMMITTED (keeper.diveTiming, the
+    // judged moment) and its hands land on result.keeperNorm exactly as the ball
+    // arrives — so on a blasted shot you SEE the dive still mid-travel, falling
+    // short, which is precisely what the model judged (Track A2).
+    const commitMs = Math.max(0, keeper.diveTiming);
+    const diveMs = Phaser.Math.Clamp(dur - commitMs, 120, CONFIG.RESOLUTION.diveTravelMs);
+    this.time.delayedCall(commitMs, () => this.diveKeeperTo(handX, handY, diveMs));
 
     // Ball end: a save meets the keeper's gloves; otherwise its landing point.
     const end = result.saved ? { x: handX, y: handY } : taker.landingPoint;
@@ -1147,17 +1179,14 @@ export class GameScene extends Phaser.Scene {
     const bendPx = taker.curve * CONFIG.FLIGHT.curveGain * goal.width;
     if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
 
-    // Higher power = faster ball travel (Phase 1).
-    const dur = Phaser.Math.Linear(CONFIG.FLIGHT.flightDurationSlow, CONFIG.FLIGHT.flightDurationFast, taker.power);
-
     // The shot's own outcome (ignores the keeper) — Phase 1 diagnostic.
     const shot = shotOutcome(taker.landingNorm).toUpperCase();
 
     this.debug.setLines([
       'FLIGHT',
-      'power ' + taker.power.toFixed(2) + '   shot ' + shot,
+      'power ' + taker.power.toFixed(2) + '   flight ' + Math.round(dur) + 'ms   shot ' + shot,
       'landing ' + (taker.landingZone ?? 'OFF FRAME') + '   keeper ' + keeper.diveZone,
-      'timing ' + result.timingQuality.toFixed(2) + '   reach ' + result.reachMargin.toFixed(2),
+      'dive p ' + result.timingQuality.toFixed(2) + '   reach ' + result.reachMargin.toFixed(2),
     ]);
 
     // Strike: camera snap + micro hit-stop (Tier 1) + power-scaled shake + turf
@@ -1180,17 +1209,43 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // Keeper mode: the ball + the player's dive already animated during the
-  // reaction. A save just adds the deflection off the gloves; a goal is already
-  // in the net.
+  // Keeper mode (Track A1): the dive was submitted MID-flight, so the result is
+  // known while the ball is still in the air. Here we (a) re-aim the visible dive
+  // to the JUDGED hand position (short of the target on a late/rushed dive — the
+  // dive you see is the dive that was judged), (b) on a save bend the remaining
+  // flight into the gloves so the ball ENDS there — it never lands in the net
+  // first — and (c) wait for the flight to finish before the outcome shows.
   private async settleKeeperOutcome(result: PenaltyResult): Promise<void> {
-    if (!result.saved) return;
     const goal = this.layout.goal;
     const handX = goal.x + result.keeperNorm.x * goal.width;
     const handY = goal.y + result.keeperNorm.y * goal.height;
-    this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" on the save (Tier 1, item 4)
-    this.screenShake(CONFIG.JUICE.shake.saveAmt); // Tier 2, item 5
-    await this.deflectBall(handX, handY);
+    const remaining = Math.max(0, this.arrivalAt - performance.now());
+
+    // Re-aim the in-progress dive to where the hands were judged to arrive.
+    if (this.diveCaptured) {
+      this.tweens.killTweensOf(this.keeper);
+      this.diveKeeperTo(handX, handY, Phaser.Math.Clamp(remaining, 120, CONFIG.RESOLUTION.diveTravelMs));
+    }
+
+    if (result.saved && this.keeperFlightEnd) {
+      // Bend the last stretch of the flight into the gloves (smooth, no jump —
+      // the endpoint itself is tweened while flyBall keeps reading it live).
+      this.tweens.add({
+        targets: this.keeperFlightEnd,
+        x: handX,
+        y: handY,
+        duration: Math.max(80, Math.min(remaining * 0.9, 300)),
+        ease: 'Quad.easeOut',
+      });
+    }
+
+    if (this.keeperFlightDone) await this.keeperFlightDone; // ball arrives
+
+    if (result.saved) {
+      this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" as the ball meets the gloves
+      this.screenShake(CONFIG.JUICE.shake.saveAmt); // Tier 2, item 5
+      await this.deflectBall(handX, handY);
+    }
   }
 
   // ── Keeper-mode reaction (Milestone 5) ────────────────────────────────────
@@ -1203,10 +1258,14 @@ export class GameScene extends Phaser.Scene {
     const C = CONFIG.CPU_TAKER;
     const goal = this.layout.goal;
     const start = { x: this.layout.ball.x, y: this.layout.ball.y };
-    const end = taker.landingPoint;
     const bendPx = taker.curve * CONFIG.FLIGHT.curveGain * goal.width;
+    // The CPU's shot power sets the ball's speed = YOUR reaction window (Track
+    // A2) — the same value resolvePenalty races the dive against.
+    const flightMs = kickFlightMs(taker.power, 'keeper');
 
     this.diveCaptured = null;
+    this.keeperFlightEnd = null;
+    this.keeperFlightDone = null;
     this.state = 'busy'; // not diveable yet — the "set" beat
     this.fx.clear();
 
@@ -1216,10 +1275,13 @@ export class GameScene extends Phaser.Scene {
     // The body-lean tell points to the shot's side (read it to dive early).
     const tellSide = taker.landingNorm.x - 0.5; // <0 = the keeper's right side, etc.
 
-    // Pre-compute the strike instant so an EARLY commit (during the tell) can be
-    // timed against it too ("early commit is allowed but locks you in" — PRD §6).
+    // PREDICTED strike instant so an EARLY commit (during the tell) can be timed
+    // ("early commit is allowed but locks you in" — PRD §6). The strike callback
+    // below re-stamps it with the REAL wall-clock moment, because Phaser timers
+    // run on the rAF clock and can drift late under load (Track A4).
     const now = performance.now();
     this.strikeAt = now + CONFIG.KEEPER.readyMs + C.tellLeadTime;
+    this.arrivalAt = this.strikeAt + flightMs;
 
     // Ready → tell: lean the striker; open the dive window (early commit allowed).
     this.time.delayedCall(CONFIG.KEEPER.readyMs, () => {
@@ -1229,31 +1291,43 @@ export class GameScene extends Phaser.Scene {
     });
 
     // Strike → launch the flight (the dive window stays open through it). The ball
-    // grows as it rushes the camera (keeper's-eye), in front of everything.
+    // grows as it rushes the camera (keeper's-eye), toward a RETARGETABLE end: if
+    // the dive resolves a save mid-flight, the last stretch bends into the gloves.
     this.time.delayedCall(CONFIG.KEEPER.readyMs + C.tellLeadTime, () => {
+      this.strikeAt = performance.now(); // the REAL strike moment (Track A4)
+      this.arrivalAt = this.strikeAt + flightMs;
       this.kickTakerFigure(tellSide);
       if (CONFIG.HAPTICS.enabled) navigator.vibrate?.(CONFIG.HAPTICS.kickMs);
       // Camera snap toward the incoming ball + turf flecks at the far spot. NOTE: no
       // hit-stop AND no screen shake here on purpose — the keeper's dive timing is
       // wall-clock, so a freeze would desync it and a shake would spoil the read.
-      this.cameraBeat('strike', end);
+      this.cameraBeat('strike', taker.landingPoint);
       this.burstTurf(start.x, start.y);
-      void this.flyBall(start, end, bendPx, C.flightTime, CONFIG.KEEPER.flightScaleStart, CONFIG.KEEPER.flightScaleEnd, { power: taker.power });
+      this.keeperFlightEnd = { x: taker.landingPoint.x, y: taker.landingPoint.y };
+      this.keeperFlightDone = this.flyBall(
+        start,
+        this.keeperFlightEnd,
+        bendPx,
+        flightMs,
+        CONFIG.KEEPER.flightScaleStart,
+        CONFIG.KEEPER.flightScaleEnd,
+        { power: taker.power, endRef: this.keeperFlightEnd },
+      );
+      // A dive committed EARLY (during the tell) was held until the race exists —
+      // submit it now so the loop can resolve while the ball flies (Track A1).
+      if (this.diveCaptured && this.human.isAwaitingKeeper()) {
+        this.human.submitDive(this.diveCaptured.zone, this.diveCaptured.timing);
+      }
     });
 
-    // Window close: hand the dive (or a "no dive") back to the loop. The small
-    // grace lets the ball visibly reach the goal before a no-dive is judged.
-    const windowMs = CONFIG.KEEPER.readyMs + C.tellLeadTime + C.flightTime + CONFIG.UI.betweenKicksMs;
-    this.time.delayedCall(windowMs, () => {
+    // No-dive deadline = BALL ARRIVAL (Track A1: the window closes when the ball
+    // does — dives during the whole flight were already submitted on capture).
+    this.time.delayedCall(CONFIG.KEEPER.readyMs + C.tellLeadTime + flightMs, () => {
       if (!this.human.isAwaitingKeeper()) return;
       this.state = 'busy';
-      if (this.diveCaptured) {
-        this.human.submitDive(this.diveCaptured.zone, this.diveCaptured.timing);
-      } else {
-        // Frozen keeper: a centre stance, dived so late the hands never leave
-        // centre — only a shot hit straight at them is stopped (react or concede).
-        this.human.submitDive('BM', CONFIG.RESOLUTION.diveLateWindowMs * 10);
-      }
+      // Frozen keeper: judged as committed only at arrival — the hands never
+      // leave centre, so only a shot hit straight at them is stopped.
+      this.human.submitDive('BM', flightMs + CONFIG.RESOLUTION.diveTravelMs);
     });
   }
 
@@ -1268,7 +1342,9 @@ export class GameScene extends Phaser.Scene {
     durationMs: number,
     scaleStart: number = CONFIG.FLIGHT.scaleStart,
     scaleEnd: number = CONFIG.FLIGHT.scaleEnd,
-    opts?: { power?: number },
+    // endRef: a LIVE endpoint read every frame — lets a mid-flight save bend the
+    // last stretch of the flight into the gloves (Track A1). Omit for a fixed end.
+    opts?: { power?: number; endRef?: { x: number; y: number } },
   ): Promise<void> {
     const F = CONFIG.FLIGHT;
     const T = CONFIG.JUICE.trail;
@@ -1285,9 +1361,10 @@ export class GameScene extends Phaser.Scene {
       ease: F.easing,
       onUpdate: () => {
         const t = prog.t;
+        const e = opts?.endRef ?? end; // live endpoint (retargetable — Track A1)
         const lift = arcPx * Math.sin(Math.PI * t); // height above the straight path
-        const x = start.x + (end.x - start.x) * t + bendPx * Math.sin(Math.PI * t);
-        const groundY = start.y + (end.y - start.y) * t; // path y BEFORE the arc lift
+        const x = start.x + (e.x - start.x) * t + bendPx * Math.sin(Math.PI * t);
+        const groundY = start.y + (e.y - start.y) * t; // path y BEFORE the arc lift
         const y = groundY - lift;
         const s = scaleStart + (scaleEnd - scaleStart) * t;
         this.ball.setPosition(x, y);
@@ -1352,15 +1429,29 @@ export class GameScene extends Phaser.Scene {
   // Player-kick outcome → reuses announceOutcome with the mode's win meaning.
   private async showOutcome(result: PenaltyResult): Promise<void> {
     if (import.meta.env.DEV) (window as unknown as { __lastResult?: unknown }).__lastResult = result;
-    const label = result.outcome === 'goal' ? 'GOAL!' : result.outcome === 'save' ? 'SAVED!' : 'MISS!';
-    const color =
+    const keeperView = this.mode === 'keeper';
+    // Banner + colour from the PLAYER's perspective (Track A1): in keeper view a
+    // conceded goal must never show as a green celebratory "GOAL!" — your save is
+    // the green one, a concession is the red one, a CPU spray is your let-off.
+    const label =
       result.outcome === 'goal'
-        ? CONFIG.COLORS.outcomeGoal
+        ? keeperView
+          ? 'CONCEDED'
+          : 'GOAL!'
         : result.outcome === 'save'
-          ? CONFIG.COLORS.outcomeSave
-          : CONFIG.COLORS.outcomeMiss;
-    // Whether the PLAYER won this kick. Taker mode: a goal. Keeper mode: a save.
-    const playerWon = this.mode === 'keeper' ? result.saved : result.scored;
+          ? 'SAVED!'
+          : keeperView
+            ? 'WIDE!'
+            : 'MISS!';
+    // Whether the PLAYER won this kick: as taker only a goal is; as keeper any
+    // non-goal (a save, or the CPU missing) went your way.
+    const playerWon = keeperView ? !result.scored : result.scored;
+    const color =
+      result.outcome === 'miss'
+        ? CONFIG.COLORS.outcomeMiss
+        : playerWon
+          ? CONFIG.COLORS.outcomeGoal
+          : CONFIG.COLORS.outcomeSave;
 
     // Outcome framing (Tier 1, item 3): celebrate a goal on the net, favour the
     // keeper on a save, then ease back to neutral on the next enterAiming.
@@ -1533,6 +1624,12 @@ export class GameScene extends Phaser.Scene {
   private rebuild(width: number, height: number): void {
     this.layout = computeLayout(width, height, this.mode);
     this.world.removeAll(true);
+
+    // Draw order (Track A1): in the keeper's-eye view YOU are the nearest thing
+    // on the pitch, so the keeper must occlude the incoming ball — the ball can
+    // no longer draw "through" the body. Taker view keeps the ball on top (it is
+    // nearer the camera than the far keeper for the whole flight).
+    this.keeper.setDepth(this.mode === 'keeper' ? 410 : 380);
 
     this.drawBackground();
     this.drawFloodlights(); // Tier 3 — bright banks for the bloom to sit on

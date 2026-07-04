@@ -1,4 +1,4 @@
-# Handoff — continue the Penalty Shootout build (next: Phase 4)
+# Handoff — continue the Penalty Shootout build (next: design-rework Tracks A3/A5 + B, then C)
 
 Paste the **Prompt block** below into a fresh Claude Code session. Everything under
 it is context for that session. **Source of truth order:** the owner's phased plan
@@ -33,8 +33,13 @@ clashes).
 > button — see CLAUDE.md).
 >
 > I'm a non-technical owner: write clear, well-commented code and explain decisions
-> plainly. Develop on branch `claude/penalty-shootout-setup-9bs643`; commit + push
+> plainly. Develop on branch `claude/fable5-design-rework-1avwyo`; commit + push
 > each working step there. Don't open a PR unless I ask.
+>
+> **We are executing `docs/design-rework-plan.md`** (read it in full). Track A's
+> core (A1/A2/A4) is DONE (⏸ owner playtest). Agreed next steps + model
+> assignment: **A3 (woodwork) + A5 (fairness details) + Track B (feedback/feel)
+> on Sonnet, Track C (aesthetic rework) on Opus** — in that order.
 
 ---
 
@@ -139,6 +144,41 @@ keeper), CPU turn = keeper view (you dive to save the CPU's kick). Both run thro
 `playOpponentShot`. No change to resolvePenalty / kick loop / shootout machine. Verified
 headless (view flips per turn, both sides' kicks recorded, dives register, no errors).
 
+## Design rework — Track A core (A1/A2/A4) — DONE, awaiting playtest ⏸
+Full plan: `docs/design-rework-plan.md` (audit of every functional flaw + research on
+the best games in the category; Tracks A correctness / B feedback / C aesthetics).
+The Track A core fixed the owner's two worst reports:
+- **A2+A4 — THE RACE (one formula):** `resolvePenalty(taker, keeper, seed, flightMs)`
+  — `diveTiming` is now "ms after the strike the dive was committed" and
+  `diveProgress = clamp((flightMs − commit) / RESOLUTION.diveTravelMs)`. Ball speed
+  (power) genuinely races the keeper's hands: a blasted shot beats a dive a soft shot
+  can't; a dive committed with air time left counts as arriving (no more "saved on
+  screen, goal in the maths"). `resolve.ts kickFlightMs(power, view)` is the ONE
+  flight-time source shared by animation + resolution. CPU keeper commits at
+  `CPU_KEEPER.reactionDelay ± timingJitterMs` (judged AND animated from that moment,
+  landing on `result.keeperNorm` exactly at ball arrival). Keeper-view flight time
+  lerps `CPU_TAKER.flightTimeSlow→Fast` by CPU power (was fixed 800ms). Removed:
+  `RESOLUTION.diveLateWindowMs`, `KEEPER.idealReactMs`, `CPU_TAKER.flightTime`.
+- **A1 — the save happens where you see it (keeper view):** the human dive is
+  submitted MID-flight (or held to the strike for early commits; no-dive deadline =
+  ball arrival), so the kick resolves while the ball is in the air; on a save the
+  flight's END is retargeted into the gloves (`flyBall` gained a live `endRef`) — the
+  ball never lands in the net first. The visible dive is re-aimed to the JUDGED
+  `keeperNorm` (short of target on late dives). Keeper (depth 410) now occludes the
+  ball (400) in keeper view only. Banner is player-perspective: keeper-view save =
+  green "SAVED!", conceded = red "CONCEDED", CPU spray = "WIDE!" (no more green
+  celebratory GOAL! when you concede).
+- Still pure/deterministic (seed + flightMs in ⇒ same result out) — the M8 keystone
+  holds. `__penalty.resolvePenalty` now takes 4 args; new hooks: `kickFlightMs`,
+  `getBallPos()`, `getGoalRect()`.
+- Verified headless (scratchpad `verify-track-a.mjs` pattern): 14/14 — model truths
+  (slow saved vs blasted scored on the same dive; airborne "late" dive = full dive;
+  frozen keeper = centre only), live taker kick, live keeper-view kicks with the ball
+  ending at the GLOVES on saves / the LANDING on goals, timeScale restored, no errors.
+- **NOT done here (parked for Sonnet):** A3 woodwork, A5 fairness details (CPU reads
+  aimed-not-landed zone, elliptical scatter, `margin` shrink to ≤0.05, resolved-kick
+  survives rotation, end-screen tap guard, miss-dive), Track B, Track C.
+
 ## (Superseded) earlier Phase-4 expectation
 Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a
 **scored session reusing `game/shootout.ts`** (Keeper counts SAVES; player keeps goal
@@ -150,8 +190,9 @@ also still pending. **Wait for the owner's actual Phase 4 text before building.*
 - SFX are placeholder procedural Web Audio (CONFIG.SOUND); owner wants real crowd
   samples later.
 - iOS Safari has no Vibration API (haptics Android-only); possible later experiment.
-- Keeper-mode timing now bites (Phase 2 model); `RESOLUTION.diveLateWindowMs` is the
-  knob if the owner wants it more/less forgiving (shared with Taker — judge together).
+- Keeper timing knob is now `RESOLUTION.diveTravelMs` (hands' full-dive travel time;
+  bigger = more forgiving) + the flight-time ranges (`FLIGHT.flightDuration*`,
+  `CPU_TAKER.flightTime*`) — shared by Taker + Keeper; judge together at playtest.
 - Taker `SESSION.opponentScoreChance` (0.68) is the AI-opponent strength dial for the
   shootout; tune for a fair, winnable game.
 - The debug overlay (top-left) can overlap the centered scoreboard on a narrow phone;

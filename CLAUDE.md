@@ -180,4 +180,37 @@ practice toggle + switches clean. Difficulty button still sets the CPU **keeper*
 - ⏸ Stop for owner playtest. Tuning knobs: UI.turnBannerMs/viewFadeMs, KEEPER.* (dive feel),
   CPU_TAKER.* (how the CPU shoots at you).
 
+## Design rework (owner request 2026-07-04) — plan: `docs/design-rework-plan.md`
+Full audit + category research → Tracks **A correctness / B feedback / C aesthetics**.
+Agreed model split: Track A core on Fable, A3/A5 + Track B on Sonnet, Track C on Opus.
+- **Track A core (A1/A2/A4): DONE (awaiting owner playtest ⏸).**
+  - **A2+A4 — the race:** `resolvePenalty(taker, keeper, seed, flightMs)` — `diveTiming`
+    = ms after the strike the dive was committed; `diveProgress = clamp((flightMs −
+    commit) / RESOLUTION.diveTravelMs)`. Shot power (ball speed) now genuinely races
+    the keeper: a blasted shot beats a dive a soft one can't (taker AND keeper views —
+    keeper-view flight lerps `CPU_TAKER.flightTimeSlow→Fast` by CPU power); a dive
+    committed while the ball still flies counts as arriving (lateness is judged vs
+    ARRIVAL, not the strike — waiting to see the ball no longer auto-concedes).
+    `resolve.ts kickFlightMs(power, view)` is the ONE flight-time source for animation
+    + resolution. CPU keeper commits at `reactionDelay ± jitter` and its dive ANIMATES
+    from that commit to `result.keeperNorm` exactly at ball arrival (fast shot = dive
+    visibly falls short). REMOVED knobs: `diveLateWindowMs`, `idealReactMs`,
+    `CPU_TAKER.flightTime`. `strikeAt` is re-stamped wall-clock inside the strike
+    callback (rAF drift fix).
+  - **A1 — saves read as saves (keeper view):** dives submit MID-flight (early commits
+    held to the strike; no-dive deadline = ball arrival), so the kick resolves in the
+    air; on a save the flight END retargets into the gloves (`flyBall` live `endRef`)
+    — the ball NEVER lands in the net first; the visible dive re-aims to the judged
+    `keeperNorm`; keeper (depth 410) occludes the ball in keeper view; banners are
+    player-perspective (green SAVED! / red CONCEDED / WIDE!).
+  - Keystone intact: resolver still pure/deterministic; loop still provider-agnostic.
+    Dev hooks: `resolvePenalty` takes 4 args now; added `kickFlightMs`, `getBallPos`,
+    `getGoalRect`. Verified headless 14/14 (fast-vs-slow outcome flip on the same
+    dive; airborne dive = full progress; frozen keeper = centre only; ball ends at
+    gloves on saves / landing on goals; timeScale restored; no errors).
+  - ⏸ Playtest knobs: RESOLUTION.diveTravelMs / powerReachPenalty, CPU_KEEPER.
+    reactionDelay, CPU_TAKER.flightTimeSlow/Fast, FLIGHT.flightDurationSlow/Fast.
+- **Next:** A3 (woodwork) + A5 (fairness details) + Track B on Sonnet, then Track C on
+  Opus. See the plan doc §Part 3 and HANDOFF.md.
+
 ## Then — Phase 6 (online 2-player). Still later; the provider-swap keystone holds.

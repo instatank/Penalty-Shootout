@@ -2,14 +2,17 @@
  * resolve.ts — THE keystone (PRD §7). A single PURE, DETERMINISTIC function
  * decides every save/goal/miss in the game.
  *
- * Model (Phase 2): GEOMETRIC reach, not a hidden dice roll. The keeper's hands
- * travel from goal centre toward the dive target; the ball is saved if it lands
- * within the reach ellipse around where the hands have ACTUALLY reached when it
- * arrives (a late dive = hands still near centre). High power shrinks reach a
- * touch; the extreme corners sit outside reach (unsaveable). So the outcome
- * matches the visible ball↔keeper interaction: ball meets keeper ⇒ save, ball
- * beats keeper ⇒ goal. A small seeded band at the edge keeps borderline shots
- * lively (and replayable online).
+ * Model (Phase 2, retimed by design-rework Track A2/A4): GEOMETRIC reach, not a
+ * hidden dice roll. The keeper's hands travel from goal centre toward the dive
+ * target and RACE the ball: the dive is committed `diveTiming` ms after the
+ * strike, the hands need diveTravelMs to fully arrive, and the ball lands after
+ * `flightMs` (a harder shot flies faster ⇒ less hand-travel time). The ball is
+ * saved if it lands within the reach ellipse around where the hands have
+ * ACTUALLY reached at arrival. High power also shrinks reach a touch; the
+ * extreme corners sit outside reach (unsaveable). So the outcome matches the
+ * visible ball↔keeper interaction: ball meets keeper ⇒ save, ball beats keeper
+ * ⇒ goal. A small seeded band at the edge keeps borderline shots lively (and
+ * replayable online).
  *
  * It imports NO Phaser and works in normalised goal coordinates (0..1 across the
  * goal mouth), so it is resolution-independent, trivially testable, and — given
@@ -34,7 +37,9 @@ export interface TakerInput {
 /** The keeper's committed action (PRD §7). Identical shape for CPU/human/remote. */
 export interface KeeperInput {
   diveZone: ZoneId;
-  diveTiming: number; // ms offset from the ideal moment (0 = perfectly timed)
+  diveTiming: number; // ms AFTER the strike the dive was committed (≤0 = at/
+  // before the strike). resolvePenalty races it against the kick's flightMs:
+  // the hands get (flightMs − max(0, diveTiming)) of travel time (Track A2/A4).
 }
 
 export interface PenaltyResult {
@@ -69,22 +74,46 @@ function zoneCenterNorm(zone: ZoneId): { x: number; y: number } {
 }
 
 /**
+ * The kick's flight time in ms, from shot power — the SHARED source for both the
+ * animation and resolvePenalty, so what you see is exactly what is judged
+ * (Track A2). 'taker' view = the behind-the-taker flight; 'keeper' view = the
+ * keeper's-eye flight (= the human keeper's reaction window). Pure.
+ */
+export function kickFlightMs(power: number, view: 'taker' | 'keeper'): number {
+  const p = clamp(power, 0, 1);
+  if (view === 'keeper') {
+    const C = CONFIG.CPU_TAKER;
+    return C.flightTimeSlow + (C.flightTimeFast - C.flightTimeSlow) * p;
+  }
+  const F = CONFIG.FLIGHT;
+  return F.flightDurationSlow + (F.flightDurationFast - F.flightDurationSlow) * p;
+}
+
+/**
  * Compute the outcome of one penalty. Pure: same inputs + seed ⇒ same result.
  *
- * REACH-BASED model (Phase 2 — "build exactly this"). The keeper's hands start at
- * goal centre and travel toward the committed dive target. `diveProgress` is how
- * far they get by the moment the ball ARRIVES: an early/on-time commit reaches the
- * target (1); diving late leaves the hands near centre (→0). The ball is SAVED if
- * it lands within the keeper's reach ellipse around the hands' ARRIVAL position; a
+ * REACH-BASED model (Phase 2, retimed by Track A2/A4). The keeper's hands start
+ * at goal centre and travel toward the committed dive target. `diveProgress` is
+ * how far they get by the moment the ball ARRIVES: the dive is committed
+ * max(0, diveTiming) ms after the strike, the hands need diveTravelMs for the
+ * full journey, and the ball lands after `flightMs` — so progress =
+ * (flightMs − commit) / diveTravelMs, clamped 0..1. The ball is SAVED if it
+ * lands within the keeper's reach ellipse around the hands' ARRIVAL position; a
  * thin `margin` band at the edge is a seeded tie-break.
  *
- * This yields the three Phase-2 behaviours: (a) a correct, well-timed dive saves
- * most of that side but NOT the extreme corner (reach is tuned smaller than the
- * corner distance); (b) a keeper who doesn't commit / dives late keeps a small
- * central reach, so dead-centre is saveable and a corner is not; (c) diving the
- * wrong way OR too late leaves the goal open — a save must be a READ, not a reaction.
+ * Behaviours this yields: (a) a correct, promptly-committed dive saves most of
+ * that side but NOT the extreme corner (reach is tuned smaller than the corner
+ * distance); (b) a keeper who never commits keeps only the small central reach —
+ * dead-centre is saveable, anything else is not; (c) the wrong way OR too late
+ * leaves the goal open; (d) a BLASTED shot (small flightMs) genuinely beats a
+ * keeper that a soft shot would not — power races the dive (Track A2).
  */
-export function resolvePenalty(taker: TakerInput, keeper: KeeperInput, seed: number): PenaltyResult {
+export function resolvePenalty(
+  taker: TakerInput,
+  keeper: KeeperInput,
+  seed: number,
+  flightMs: number, // the kick's flight time (use kickFlightMs — Track A2)
+): PenaltyResult {
   const R = CONFIG.RESOLUTION;
   const center = { x: 0.5, y: 0.5 }; // resting hands position (goal centre)
   const diveTarget = zoneCenterNorm(keeper.diveZone);
@@ -95,9 +124,11 @@ export function resolvePenalty(taker: TakerInput, keeper: KeeperInput, seed: num
     return { outcome: 'miss', saved: false, scored: false, keeperNorm: center, timingQuality: 0, reachMargin: Infinity };
   }
 
-  // How far the hands have travelled toward the dive target by ball arrival.
-  // Early/on-time (diveTiming ≤ 0) = fully there; later = progressively less.
-  const diveProgress = clamp(1 - Math.max(0, keeper.diveTiming) / R.diveLateWindowMs, 0, 1);
+  // How far the hands have travelled toward the dive target by ball arrival:
+  // the time between the dive commit and the ball landing, over a full dive's
+  // travel time. Early commits (diveTiming ≤ 0) get the whole flight (Track A4).
+  const commitMs = Math.max(0, keeper.diveTiming);
+  const diveProgress = clamp((flightMs - commitMs) / R.diveTravelMs, 0, 1);
   const hands = {
     x: center.x + (diveTarget.x - center.x) * diveProgress,
     y: center.y + (diveTarget.y - center.y) * diveProgress,

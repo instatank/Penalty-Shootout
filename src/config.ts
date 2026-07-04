@@ -227,7 +227,9 @@ const AIM = {
 const FLIGHT = {
   // Higher power = faster ball travel (Phase 1). The taker flight time lerps from
   // slow (a gentle shot) to fast (a blasted shot) by power. (Keeper-view flight
-  // uses CONFIG.CPU_TAKER.flightTime — the reaction window — instead.)
+  // lerps CONFIG.CPU_TAKER.flightTimeSlow→Fast — the reaction window — instead.
+  // Both go through resolve.ts kickFlightMs, the ONE flight-time source that the
+  // resolution also races the keeper's dive against — Track A2.)
   flightDurationSlow: 760, // ms at min power
   flightDurationFast: 470, // ms at max power
   easing: 'Quad.easeOut', // decelerate into the goal (reads as perspective)
@@ -259,9 +261,12 @@ const CPU_KEEPER = {
   guessAccuracyMax: 0.85,
   rowAccuracyMin: 0.5, // height (high/low) read accuracy, lerp by difficulty — at
   rowAccuracyMax: 0.9, //  easy it's a coin flip; at hard it usually reads height too
-  timingJitterMs: 45, // small ± noise on the CPU's (on-time) commit, so it isn't robotic
-  reactionDelay: 160, // ms after the strike before the dive animation starts
-  diveDuration: 420, // ms for the dive animation
+  timingJitterMs: 45, // ± noise on the commit moment (reactionDelay), so it isn't robotic
+  reactionDelay: 160, // ms after the strike the CPU COMMITS its dive. Since Track A2
+  //  this is judged too: the hands get (flightMs − reactionDelay) to travel, so a
+  //  blasted shot genuinely arrives before them while a soft shot does not.
+  diveDuration: 420, // ms for a FULL dive animation (kept = RESOLUTION.diveTravelMs
+  //  so the animated dive and the judged hand-travel agree)
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -272,8 +277,12 @@ const CPU_TAKER = {
   //  purpose: a sharp player reads it, a casual one shoots blind (PRD §6).
   tellLeanMaxRad: 0.4, // body-lean angle at tellStrength=1 (radians) — the visual size of a full tell
   tellLeadTime: 350, // ms the tell (body lean) shows BEFORE the strike
-  flightTime: 800, // ms the ball takes to reach the goal = the keeper's reaction
-  //  window. Lower this to make Keeper mode harder (less time to read + dive).
+  // Ball speed BY POWER = your reaction window (Track A2). The CPU's release
+  // power (powerMin/Max below) lerps the flight time between these, so a blasted
+  // CPU shot gives you visibly less time to read + dive, a soft one more.
+  // (Replaces the old fixed flightTime: 800.)
+  flightTimeSlow: 900, // ms flight at power 0 (the longest reaction window)
+  flightTimeFast: 620, // ms flight at power 1 (the shortest)
   // Relative likelihood the CPU aims at each zone, in ZONE_IDS order
   // (TL,TM,TR,BL,BM,BR) — corners favoured, centre rare, so most shots are
   // genuinely savable by reading the side.
@@ -298,11 +307,11 @@ const KEEPER = {
   diveColThreshFrac: 0.05, // sideways flick (fraction of screen WIDTH) to commit Left/Right
   diveRowThreshFrac: 0.07, // upward flick (fraction of screen HEIGHT) to commit a HIGH dive
 
-  // Timing. The "perfect" dive is committed this many ms AFTER the strike (a
-  // human cannot react in 0ms, so the sweet spot sits a beat after the kick).
-  // resolvePenalty reads diveTiming where 0 = perfect; we map the real dive to
-  // that. Diving earlier (during the tell) or later both drift off-perfect.
-  idealReactMs: 130,
+  // Timing (Track A4): diveTiming = ms after the strike the flick STARTED, and
+  // resolvePenalty races it against the ball's flight — commit while the ball
+  // still has ≥ RESOLUTION.diveTravelMs of air time and the hands fully arrive;
+  // later commits get proportionally less far. No fixed "sweet spot" any more
+  // (the old idealReactMs offset punished dives that visibly completed in time).
   diveDuration: 360, // ms for the player-keeper's dive animation
   readyMs: 550, // a short "set" beat after the ball is placed, before the tell,
   //  so the next shot does not start the instant the previous one ends.
@@ -314,8 +323,7 @@ const KEEPER = {
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RESOLUTION (PRD §7) — weights for the single pure resolvePenalty(). (Not
-// wired until Milestone 4.) maxSaveChance < 1 keeps perfect corners unsaveable.
+// RESOLUTION (PRD §7) — weights for the single pure resolvePenalty().
 // ─────────────────────────────────────────────────────────────────────────────
 const RESOLUTION = {
   // REACH-BASED save model (Phase 2). The keeper's hands travel from goal centre
@@ -327,10 +335,18 @@ const RESOLUTION = {
   // (a correct dive still saves most of that side). The PRIMARY tuning knobs.
   reachX: 0.2, // horizontal reach radius around the hands
   reachY: 0.3, // vertical reach radius around the hands
-  diveLateWindowMs: 240, // how late a dive can be before the hands never leave
-  //  centre (0 = perfect → hands fully reach the target; ≥ this late → stay centre).
-  //  This is what makes a save a READ, not a reaction (Phase 2 commit-timing).
-  powerReachPenalty: 0.2, // a hard shot shrinks reach by up to this (× power)
+  // THE RACE (design-rework Track A2 + A4). The keeper commits a dive
+  // `diveTiming` ms after the strike; the hands need diveTravelMs to fully reach
+  // the dive target; the ball arrives after the kick's flightMs (faster shot =
+  // less travel time). diveProgress = clamp((flightMs − commit) / diveTravelMs).
+  // So a BLASTED shot genuinely beats a keeper a soft shot would not (A2), and a
+  // dive committed while the ball still has ≥diveTravelMs of air time counts as
+  // fully arriving — lateness is judged vs BALL ARRIVAL, not the strike (A4).
+  // (Replaces the old strike-anchored diveLateWindowMs, which punished dives
+  // that visibly completed before a slow ball arrived, and let the CPU keeper
+  // always "get there" regardless of shot speed.)
+  diveTravelMs: 420, // hands' travel time centre → dive target (a full dive)
+  powerReachPenalty: 0.2, // a hard shot ALSO shrinks reach by up to this (× power)
   margin: 0.18, // soft save/goal band at the very edge of reach (seeded tie-break)
 } as const;
 

@@ -156,9 +156,12 @@ export class CpuProvider implements InputProvider {
     }
     const diveZone = zoneFrom(guessCol, guessRow);
 
-    // The CPU commits ON TIME (its hands reach the guess) — just a little jitter
-    // so it isn't robotic. Beatability is direction + corners, not timing.
-    const diveTiming = (seededRandom(ctx.seed, 11) * 2 - 1) * k.timingJitterMs;
+    // The CPU commits its dive a beat after the strike (reactionDelay ± jitter).
+    // Since Track A2 this commit moment is judged by resolvePenalty as the start
+    // of the hands' travel, RACING the ball's flight — so a blasted shot arrives
+    // before the hands do, while a soft shot gives them time. Beatability is now
+    // direction + corners + genuine shot speed.
+    const diveTiming = k.reactionDelay + (seededRandom(ctx.seed, 11) * 2 - 1) * k.timingJitterMs;
 
     return Promise.resolve({ diveZone, diveTiming });
   }
