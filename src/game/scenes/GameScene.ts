@@ -110,6 +110,7 @@ export class GameScene extends Phaser.Scene {
   private session = 0; // bumps to stop the running loop (mode switch / play again)
   private shootout: ShootoutState = createShootout(); // Taker-mode score machine
   private scoreboard!: Phaser.GameObjects.Container;
+  private scorePanel!: Phaser.GameObjects.Graphics; // Track C — rounded backing panel
   private scoreText!: Phaser.GameObjects.Text;
   private scoreSub!: Phaser.GameObjects.Text;
   private scoreDots!: Phaser.GameObjects.Graphics;
@@ -208,12 +209,13 @@ export class GameScene extends Phaser.Scene {
     // Session toggle: the full take-and-save SHOOTOUT vs endless keeper PRACTICE.
     // Lives in the lower thumb zone. Tap, or press "M", to switch.
     this.modeButton = this.add
-      .text(8, this.scale.height - 8, 'MODE: SHOOTOUT', {
-        fontFamily: 'monospace',
-        fontSize: '18px',
-        color: '#ffffff',
-        backgroundColor: '#00000088',
-        padding: { x: 8, y: 6 },
+      .text(10, this.scale.height - 10, 'MODE: SHOOTOUT', {
+        fontFamily: 'sans-serif',
+        fontStyle: 'bold',
+        fontSize: '15px',
+        color: '#cfe0f5',
+        backgroundColor: '#0a1526cc',
+        padding: { x: 12, y: 9 },
       })
       .setOrigin(0, 1)
       .setDepth(1001)
@@ -224,12 +226,13 @@ export class GameScene extends Phaser.Scene {
 
     // Difficulty selector (Phase 2/3) — cycles EASY/MEDIUM/HARD, bottom-right.
     this.diffButton = this.add
-      .text(this.scale.width - 8, this.scale.height - 8, '', {
-        fontFamily: 'monospace',
-        fontSize: '18px',
-        color: '#ffffff',
-        backgroundColor: '#00000088',
-        padding: { x: 8, y: 6 },
+      .text(this.scale.width - 10, this.scale.height - 10, '', {
+        fontFamily: 'sans-serif',
+        fontStyle: 'bold',
+        fontSize: '15px',
+        color: '#cfe0f5',
+        backgroundColor: '#0a1526cc',
+        padding: { x: 12, y: 9 },
       })
       .setOrigin(1, 1)
       .setDepth(1001)
@@ -714,27 +717,6 @@ export class GameScene extends Phaser.Scene {
     cm.saturate(G.saturate, true);
   }
 
-  /** Bright floodlight banks at the top so the bloom has something to sit on. */
-  private drawFloodlights(): void {
-    if (!CONFIG.JUICE.grade.floodlights) return;
-    const { width } = this.layout;
-    const horizon = this.layout.horizonY;
-    const g = this.g();
-    const y = Math.max(8, horizon * 0.12);
-    const lampW = Math.max(26, width * 0.07);
-    const lampH = lampW * 0.42;
-    for (const cx of [width * 0.16, width * 0.84]) {
-      // Soft glow halo (bloom amplifies this).
-      g.fillStyle(0xfff6cc, 0.5);
-      g.fillCircle(cx, y + lampH * 0.5, lampW * 0.7);
-      // Bright lamp box + a hot white core.
-      g.fillStyle(0xfff2c4, 1);
-      g.fillRoundedRect(cx - lampW / 2, y, lampW, lampH, lampH * 0.3);
-      g.fillStyle(0xffffff, 1);
-      g.fillRoundedRect(cx - lampW * 0.34, y + lampH * 0.22, lampW * 0.68, lampH * 0.42, lampH * 0.2);
-    }
-  }
-
   // ── Tier 3, item 10: UI / transition juice ────────────────────────────────
   /** Tactile press feedback on a text button: scale-down on press, bounce back. */
   private addButtonFeedback(txt: Phaser.GameObjects.Text): void {
@@ -965,11 +947,13 @@ export class GameScene extends Phaser.Scene {
 
   // ── Session UI: scoreboard, difficulty, end screen (Phase 3) ──────────────
   private buildSessionUI(): void {
-    // Scoreboard (top-centre): score line, kick dots, phase/round sub-line.
+    // Scoreboard (top-centre): a rounded dark panel (Track C — lifts the HUD off
+    // the busy stadium) holding the score line, kick dots, and phase/round line.
+    this.scorePanel = this.add.graphics();
     this.scoreText = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '24px', color: '#ffffff' }).setOrigin(0.5, 0);
-    this.scoreSub = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: '#cfe8ff' }).setOrigin(0.5, 0);
+    this.scoreSub = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '12px', color: '#9fb8d8' }).setOrigin(0.5, 0);
     this.scoreDots = this.add.graphics();
-    this.scoreboard = this.add.container(0, 0, [this.scoreText, this.scoreDots, this.scoreSub]).setDepth(960).setScrollFactor(0).setVisible(false);
+    this.scoreboard = this.add.container(0, 0, [this.scorePanel, this.scoreText, this.scoreDots, this.scoreSub]).setDepth(960).setScrollFactor(0).setVisible(false);
 
     // End screen — TOP-LEVEL objects (not a container): Phaser input on container
     // children is unreliable, but a plain top-level interactive Text works (same
@@ -991,8 +975,18 @@ export class GameScene extends Phaser.Scene {
 
   private layoutSessionUI(w: number, h: number): void {
     if (!this.scoreboard) return;
-    this.scoreText.setScale(1).setPosition(w / 2, 6); // reset any in-flight score pop
-    this.scoreSub.setPosition(w / 2, 62);
+    // Rounded scoreboard panel behind the score/sub/dots.
+    const panelW = Math.min(w * 0.82, 340);
+    const panelH = 86;
+    const panelX = (w - panelW) / 2;
+    const g = this.scorePanel;
+    g.clear();
+    g.fillStyle(0x0a1526, 0.74);
+    g.fillRoundedRect(panelX, 4, panelW, panelH, 14);
+    g.lineStyle(1.5, 0x3a6ea5, 0.5);
+    g.strokeRoundedRect(panelX, 4, panelW, panelH, 14);
+    this.scoreText.setScale(1).setPosition(w / 2, 9); // reset any in-flight score pop
+    this.scoreSub.setPosition(w / 2, 37);
     this.endBg.setPosition(w / 2, h / 2).setSize(w, h);
     this.endTitle.setPosition(w / 2, h * 0.4);
     this.endScore.setPosition(w / 2, h * 0.4 + 52);
@@ -1055,8 +1049,8 @@ export class GameScene extends Phaser.Scene {
         }
       }
     };
-    drawRow(s.player.results, s.player.taken, 40);
-    drawRow(s.opponent.results, s.opponent.taken, 54);
+    drawRow(s.player.results, s.player.taken, 60);
+    drawRow(s.opponent.results, s.opponent.taken, 76);
   }
 
   private showEndScreen(winner: Side): void {
@@ -1243,7 +1237,7 @@ export class GameScene extends Phaser.Scene {
     if (phase === 'end') this.hidePowerMeter();
     else this.drawPowerMeter(sample.power);
 
-    this.drawSwipeFeedback(sample.points, aim);
+    this.drawSwipeFeedback(sample.points, aim, sample.curve);
     this.debug.setLines([
       'SWIPE' + (phase === 'end' ? ' (release)' : ''),
       'swipe  up ' + upPct + '%   side ' + (sidePct >= 0 ? '+' : '') + sidePct + '%',
@@ -1419,6 +1413,16 @@ export class GameScene extends Phaser.Scene {
     // Dev-only: expose the committed CPU shot for headless tests (stripped from prod).
     if (import.meta.env.DEV) (window as unknown as { __lastTaker?: unknown }).__lastTaker = taker;
 
+    // Track C — a short RUN-UP: the striker starts a couple of steps back + to
+    // the side and jogs onto the ball over the ready+tell window, with a little
+    // bob, so the strike has a wind-up (and the plant foot is the natural home
+    // of the tell). Purely cosmetic; the ball still launches on the strike beat.
+    const tk = this.layout.taker;
+    const runMs = CONFIG.KEEPER.readyMs + C.tellLeadTime;
+    this.takerFigure.setPosition(tk.x - tk.w * 0.9, tk.feetY + tk.h * 0.32);
+    this.tweens.add({ targets: this.takerFigure, x: tk.x, y: tk.feetY, duration: runMs, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: this.takerFigure, scaleY: 0.94, duration: runMs / 4, yoyo: true, repeat: 1, ease: 'Sine.easeInOut' });
+
     // The body-lean tell points to the shot's side (read it to dive early).
     const tellSide = taker.landingNorm.x - 0.5; // <0 = the keeper's right side, etc.
 
@@ -1538,6 +1542,9 @@ export class GameScene extends Phaser.Scene {
    *  normal, comfortable dive) for callers that don't know the outcome yet. */
   private diveKeeperTo(handX: number, handY: number, durationMs: number, progress = 1): void {
     const goal = this.layout.goal;
+    const k = this.layout.keeper;
+    // Redraw the keeper mid-dive with arms REACHING up-and-out (Track C pose).
+    this.drawKeeperGraphic(k.w, k.h, 1);
     const feetY = handY + this.layout.keeper.h * 0.5; // place the body so the gloves cover handY
     const p = Phaser.Math.Clamp(progress, 0, 1);
     const baseLean = Phaser.Math.Clamp((handX - this.layout.keeper.x) / (goal.width * 0.5), -1, 1) * 0.7;
@@ -1719,7 +1726,10 @@ export class GameScene extends Phaser.Scene {
 
     // Outcome framing (Tier 1, item 3): celebrate a goal on the net, favour the
     // keeper on a save, then ease back to neutral on the next enterAiming.
-    if (result.scored) this.cameraBeat('goal', { x: this.ball.x, y: this.ball.y });
+    if (result.scored) {
+      this.cameraBeat('goal', { x: this.ball.x, y: this.ball.y });
+      this.flashCrowd(); // Track C — the crowd lights up on a goal
+    }
     else if (result.saved) this.cameraBeat('save', { x: this.keeper.x, y: this.keeper.y });
     if (isCornerGoal) this.screenShake(CONFIG.JUICE.shake.saveAmt); // Track B4 — a little extra emphasis
 
@@ -1801,7 +1811,7 @@ export class GameScene extends Phaser.Scene {
     pending.forEach((r) => r());
   }
 
-  private drawSwipeFeedback(points: SwipePoint[], aim: ReturnType<typeof computeAim>): void {
+  private drawSwipeFeedback(points: SwipePoint[], aim: ReturnType<typeof computeAim>, curve = 0): void {
     const g = this.fx;
     g.clear();
 
@@ -1825,9 +1835,23 @@ export class GameScene extends Phaser.Scene {
     }
     g.strokePath();
 
+    // Aim line — drawn as the PREDICTED curved flight (Track C5): it bows
+    // sideways by the same amount the real flight will (curve · curveGain ·
+    // goalWidth at mid-flight), so a curled swipe visibly shows the ball
+    // wrapping toward the target instead of a dead-straight guide.
     const ball = this.layout.ball;
+    const bendPx = curve * CONFIG.FLIGHT.curveGain * this.layout.goal.width;
     g.lineStyle(2, CONFIG.COLORS.aimLine, 0.5);
-    g.lineBetween(ball.x, ball.y, aim.targetX, aim.targetY);
+    g.beginPath();
+    g.moveTo(ball.x, ball.y);
+    const seg = 14;
+    for (let i = 1; i <= seg; i++) {
+      const t = i / seg;
+      const x = ball.x + (aim.targetX - ball.x) * t + bendPx * Math.sin(Math.PI * t);
+      const y = ball.y + (aim.targetY - ball.y) * t;
+      g.lineTo(x, y);
+    }
+    g.strokePath();
 
     g.lineStyle(2, CONFIG.COLORS.aimRing, 0.8);
     g.strokeCircle(aim.targetX, aim.targetY, aim.errorRadius);
@@ -1896,8 +1920,7 @@ export class GameScene extends Phaser.Scene {
     // nearer the camera than the far keeper for the whole flight).
     this.keeper.setDepth(this.mode === 'keeper' ? 410 : 380);
 
-    this.drawBackground();
-    this.drawFloodlights(); // Tier 3 — bright banks for the bloom to sit on
+    this.drawBackground(); // Track C — sky + crowd + floodlights + pitch + hoardings
     this.drawPenaltyBox();
 
     if (this.mode === 'keeper') {
@@ -1927,12 +1950,10 @@ export class GameScene extends Phaser.Scene {
     const right = goal.x + goal.width;
     const top = goal.y;
     const bottom = goal.y + goal.height;
-    g.fillStyle(CONFIG.COLORS.goalFrame, 0.85);
-    g.fillRect(left - t / 2, top - t / 2, goal.width + t, t); // crossbar
-    g.fillRect(left - t / 2, top - t / 2, t, bottom - top); // left post
-    g.fillRect(right - t / 2, top - t / 2, t, bottom - top); // right post
-    // Faint net hatch so the frame reads as a goal mouth.
-    g.lineStyle(1, CONFIG.COLORS.net, 0.1);
+    const C = CONFIG.COLORS;
+    // Net hatch INSIDE the mouth first (so the frame sits on top of it), a touch
+    // brighter than taker view since this frame is close to the camera.
+    g.lineStyle(1, C.net, 0.14);
     const geo = CONFIG.GEOMETRY;
     for (let c = 1; c < geo.netCols; c++) {
       const x = left + (c / geo.netCols) * goal.width;
@@ -1942,6 +1963,16 @@ export class GameScene extends Phaser.Scene {
       const y = top + (r / geo.netRows) * goal.height;
       g.lineBetween(left, y, right, y);
     }
+    // Frame with a shaded depth face + bright front face (matches taker view).
+    const d = Math.max(2, t * 0.5);
+    g.fillStyle(C.goalFrameSide, 0.95);
+    g.fillRect(left - t / 2 + d, top - t / 2 - d, goal.width + t, t);
+    g.fillRect(left - t / 2 + d, top - t / 2 - d, t, bottom - top);
+    g.fillRect(right - t / 2 + d, top - t / 2 - d, t, bottom - top);
+    g.fillStyle(C.goalFrame, 0.95);
+    g.fillRect(left - t / 2, top - t / 2, goal.width + t, t); // crossbar
+    g.fillRect(left - t / 2, top - t / 2, t, bottom - top); // left post
+    g.fillRect(right - t / 2, top - t / 2, t, bottom - top); // right post
   }
 
   private resetBall(): void {
@@ -1989,35 +2020,172 @@ export class GameScene extends Phaser.Scene {
     return gfx;
   }
 
+  // ── Track C: the procedural night-match stadium ───────────────────────────
+  // Composed back-to-front: dusk→night sky, banked crowd, floodlights, the lit
+  // pitch, then the perimeter hoardings on the goal line. All static (world
+  // container, redrawn only on resize). `standRect` is cached so a goal can
+  // pulse the crowd (flashCrowd).
+  private standRect = { x: 0, y: 0, w: 0, h: 0 };
+
   private drawBackground(): void {
     const { width, height } = this.layout;
     const horizon = this.layout.horizonY;
-    const g = this.g();
 
-    // OVERSCAN: the neutral camera is pulled back (CONFIG.JUICE.camera.baseZoom < 1),
-    // which reveals area beyond the canvas. Paint the stadium/pitch past every edge
-    // by this margin so the pulled-back view shows more field, never empty bars.
+    // OVERSCAN: the neutral camera is pulled back (baseZoom < 1), which reveals
+    // area beyond the canvas — paint past every edge so it never shows bars.
     const M = CONFIG.JUICE.camera.enabled ? Math.max(width, height) * 0.18 : 0;
     const L = -M;
     const W = width + 2 * M;
 
-    g.fillStyle(CONFIG.COLORS.stadium, 1);
-    g.fillRect(L, -M, W, horizon + M); // stands (extended up + sideways)
-    g.fillStyle(CONFIG.COLORS.stadiumBand, 1);
-    g.fillRect(L, horizon * 0.28, W, horizon * 0.22);
+    this.drawSky(L, -M, W, horizon + M);
+    this.standRect = { x: L, y: -M, w: W, h: horizon + M };
+    this.drawCrowd(L, -M, W, horizon);
+    this.drawStadiumFloodlights(width, horizon);
+    this.drawPitch(L, horizon, W, height - horizon + M, height);
+    this.drawHoardings(L, horizon, W);
+  }
 
-    g.fillStyle(CONFIG.COLORS.pitch, 1);
-    g.fillRect(L, horizon, W, height - horizon + M); // grass (extended down + sideways)
+  /** Dusk→night vertical sky gradient (dark indigo up top, a warm glow at the
+   *  stands). Uses Graphics.fillGradientStyle for a smooth bilinear blend. */
+  private drawSky(x: number, y: number, w: number, h: number): void {
+    const C = CONFIG.COLORS;
+    const g = this.g();
+    g.fillGradientStyle(C.skyTop, C.skyTop, C.skyHorizon, C.skyHorizon, 1);
+    g.fillRect(x, y, w, h);
+  }
 
-    g.fillStyle(CONFIG.COLORS.pitchStripe, 1);
-    const stripes = 8;
-    for (let i = 0; i < stripes; i += 2) {
-      const y0 = horizon + Math.pow(i / stripes, 1.6) * (height - horizon);
-      const y1 = horizon + Math.pow((i + 1) / stripes, 1.6) * (height - horizon);
-      g.fillRect(L, y0, W, y1 - y0);
+  /** Banked crowd: a grid of small 2-tone silhouette cells with seeded per-cell
+   *  variance + rare bright accent specks, fading into the sky at the top. */
+  private drawCrowd(x: number, y: number, w: number, horizon: number): void {
+    const S = CONFIG.STADIUM.crowd;
+    const C = CONFIG.COLORS;
+    const g = this.g();
+    // The crowd occupies the band from a little below the sky top down to the
+    // goal line (horizon). Keep the very top clear so floodlights read as "up".
+    const bandTop = Math.max(y, horizon - (horizon - y) * 0.82);
+    const bandH = horizon - bandTop;
+    if (bandH <= 4) return;
+    const cell = Math.max(4, this.scale.width * S.cellFrac);
+    const gap = cell * S.gapFrac;
+    const step = cell + gap;
+    const cols = Math.ceil(w / step) + 1;
+    const rows = S.rows;
+    const rowH = bandH / rows;
+    // Stable seeded variance per (col,row) so the crowd doesn't reshuffle jarringly.
+    const rnd = (a: number, b: number) => {
+      const t = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+      return t - Math.floor(t);
+    };
+    for (let r = 0; r < rows; r++) {
+      const cy = bandTop + r * rowH;
+      // Rows near the top melt into the night sky.
+      const fromTop = rows - 1 - r; // 0 at the top row
+      const rowAlpha = fromTop < S.topFadeRows ? 0.35 + 0.65 * (fromTop / S.topFadeRows) : 1;
+      for (let c = 0; c < cols; c++) {
+        const cx = x + c * step + (r % 2) * (step * 0.5); // brick-offset alternate rows
+        const v = rnd(c + 1, r + 1);
+        let color: number = v < S.lighterChance ? C.crowdCellB : C.crowdCellA;
+        if (v > 1 - S.accentChance) color = C.crowdAccents[Math.floor(rnd(c + 3, r + 7) * C.crowdAccents.length)];
+        g.fillStyle(color, rowAlpha);
+        g.fillRect(cx, cy, cell, cell * 0.82);
+      }
     }
-    // One extra stripe band below the bottom edge so the overscan grass isn't flat.
-    g.fillRect(L, height, W, M);
+  }
+
+  /** Floodlight pylons + lamp banks with a soft glow pool, sitting above the
+   *  crowd. Always drawn (the night look depends on them). */
+  private drawStadiumFloodlights(width: number, horizon: number): void {
+    const F = CONFIG.STADIUM.floodlights;
+    const C = CONFIG.COLORS;
+    const g = this.g();
+    const bankW = width * F.lampBankFrac;
+    const bankH = bankW * 0.34;
+    const glowR = width * F.lampGlowFrac;
+    const topY = Math.max(6, horizon * 0.06);
+    for (const xf of F.xFracs) {
+      const cx = width * xf;
+      // Pylon stem rising from the crowd to the lamp bank.
+      g.fillStyle(C.floodlightPylon, 1);
+      g.fillRect(cx - bankW * 0.05, topY + bankH, bankW * 0.1, horizon * 0.32);
+      // Soft glow pool (a few stacked translucent discs = a cheap radial glow).
+      for (let i = 3; i >= 1; i--) {
+        g.fillStyle(C.floodlightGlow, 0.06 * i);
+        g.fillCircle(cx, topY + bankH * 0.5, glowR * (i / 3));
+      }
+      // Lamp bank + individual bright lamps.
+      g.fillStyle(C.floodlightPylon, 1);
+      g.fillRoundedRect(cx - bankW / 2, topY, bankW, bankH, bankH * 0.25);
+      const lamps = 4;
+      const lw = bankW / (lamps + 1);
+      for (let i = 0; i < lamps; i++) {
+        g.fillStyle(C.floodlightLamp, 1);
+        g.fillCircle(cx - bankW / 2 + lw * (i + 1), topY + bankH * 0.5, bankH * 0.28);
+      }
+    }
+  }
+
+  /** The lit pitch: mow stripes, then a bright light-pool in the centre falling
+   *  to shaded edges (a soft on-turf vignette that focuses the eye on goal). */
+  private drawPitch(x: number, y: number, w: number, h: number, height: number): void {
+    const C = CONFIG.COLORS;
+    const g = this.g();
+    g.fillStyle(C.pitch, 1);
+    g.fillRect(x, y, w, h);
+
+    // Mow stripes (perspective-spaced so they read as receding).
+    g.fillStyle(C.pitchStripe, 1);
+    const stripes = 9;
+    for (let i = 0; i < stripes; i += 2) {
+      const y0 = y + Math.pow(i / stripes, 1.5) * h;
+      const y1 = y + Math.pow((i + 1) / stripes, 1.5) * h;
+      g.fillRect(x, y0, w, y1 - y0);
+    }
+    // Centre light pool: stacked translucent discs of the bright pool colour.
+    const cx = this.layout.width / 2;
+    const cy = y + h * 0.42;
+    const R = Math.max(w, h) * 0.5;
+    for (let i = 4; i >= 1; i--) {
+      g.fillStyle(C.pitchLightPool, 0.05 * i);
+      g.fillCircle(cx, cy, R * (i / 4));
+    }
+    // Edge shade: darken the far left/right + very bottom so the pool pops.
+    g.fillStyle(C.pitchEdgeShade, 0.28);
+    g.fillRect(x, y, w * 0.16, h);
+    g.fillRect(x + w * 0.84, y, w * 0.16, h);
+    g.fillRect(x, y + h * 0.86, w, h * 0.14 + (height - (y + h)));
+  }
+
+  /** Perimeter advertising hoardings sitting on the goal line — alternating
+   *  panels in the host palette. Also the surface a wide/over shot thuds into. */
+  private drawHoardings(x: number, horizon: number, w: number): void {
+    const H = CONFIG.STADIUM.hoardings;
+    const C = CONFIG.COLORS;
+    const g = this.g();
+    const bandH = this.scale.height * H.heightFrac;
+    const y = horizon - bandH;
+    // Base band + a bright trim line along the top.
+    g.fillStyle(C.hoardingBase, 1);
+    g.fillRect(x, y, w, bandH);
+    const panelW = this.scale.width * H.panelFrac;
+    const panels = Math.ceil(w / panelW) + 1;
+    for (let i = 0; i < panels; i++) {
+      g.fillStyle(C.hoardingPanels[i % C.hoardingPanels.length], 1);
+      g.fillRect(x + i * panelW + 1, y + bandH * 0.18, panelW - 2, bandH * 0.7);
+    }
+    g.fillStyle(C.hoardingTrim, 1);
+    g.fillRect(x, y, w, Math.max(2, bandH * 0.1));
+  }
+
+  /** A goal celebration: pulse the whole crowd brighter for a beat. */
+  private flashCrowd(): void {
+    const S = CONFIG.STADIUM.crowd;
+    const r = this.standRect;
+    if (r.w <= 0) return;
+    const flash = this.add.graphics().setDepth(9); // above the crowd, below the goal (10)
+    this.world.add(flash);
+    flash.fillStyle(CONFIG.COLORS.floodlightGlow, 1).fillRect(r.x, r.y, r.w, r.h);
+    flash.setAlpha(0);
+    this.tweens.add({ targets: flash, alpha: S.goalFlashAlpha, duration: S.goalFlashMs * 0.4, yoyo: true, hold: 40, ease: 'Quad.easeOut', onComplete: () => flash.destroy() });
   }
 
   private drawPenaltyBox(): void {
@@ -2040,20 +2208,40 @@ export class GameScene extends Phaser.Scene {
   private drawGoal(): void {
     const goal = this.layout.goal;
     const t = this.layout.post;
+    const C = CONFIG.COLORS;
     const g = this.g();
     const left = goal.x;
     const right = goal.x + goal.width;
     const top = goal.y;
+    const bottom = goal.y + goal.height;
+    const d = Math.max(2, t * 0.6); // apparent depth of the frame receding into the net
 
-    g.fillStyle(CONFIG.COLORS.goalFrameShadow, 1);
-    g.fillRect(left - t / 2 + 3, top - t / 2 + 3, t, goal.height + t);
-    g.fillRect(right - t / 2 + 3, top - t / 2 + 3, t, goal.height + t);
-    g.fillRect(left - t / 2 + 3, top - t / 2 + 3, goal.width + t, t);
+    // Soft outer glow — the white frame catches the floodlights.
+    g.lineStyle(t * 2.2, C.goalFrame, 0.05);
+    g.strokeRect(left, top, goal.width, goal.height);
 
-    g.fillStyle(CONFIG.COLORS.goalFrame, 1);
+    // Cast shadow of the posts onto the ground just outside the goal line.
+    g.fillStyle(C.goalFrameShadow, 0.35);
+    g.fillEllipse(left, bottom + t * 0.4, t * 3.2, t * 1.1);
+    g.fillEllipse(right, bottom + t * 0.4, t * 3.2, t * 1.1);
+
+    // Depth face (receding up-and-back into the stadium) drawn first, shaded.
+    g.fillStyle(C.goalFrameSide, 1);
+    g.fillRect(left - t / 2 - d, top - t / 2 - d, t, goal.height + t); // left post side
+    g.fillRect(right - t / 2 - d, top - t / 2 - d, t, goal.height + t); // right post side
+    g.fillRect(left - t / 2 - d, top - t / 2 - d, goal.width + t, t); // crossbar side
+
+    // Bright front face.
+    g.fillStyle(C.goalFrame, 1);
     g.fillRect(left - t / 2, top - t / 2, t, goal.height + t);
     g.fillRect(right - t / 2, top - t / 2, t, goal.height + t);
     g.fillRect(left - t / 2, top - t / 2, goal.width + t, t);
+
+    // A crisp highlight down the front-left of each post + along the crossbar top.
+    g.fillStyle(0xffffff, 0.9);
+    g.fillRect(left - t / 2, top - t / 2, Math.max(1, t * 0.22), goal.height + t);
+    g.fillRect(right - t / 2, top - t / 2, Math.max(1, t * 0.22), goal.height + t);
+    g.fillRect(left - t / 2, top - t / 2, goal.width + t, Math.max(1, t * 0.22));
   }
 
   /** Draw the net as polylines through the NetSim nodes, so a punched bulge curves
@@ -2092,22 +2280,26 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // The 3x2 aiming zones. In normal play this is left to the live aim feedback
+  // (the reticle + highlighted target cell while swiping), so persistent grid
+  // lines + "TL/TM/…" letters would just be clutter on the polished goal. They
+  // are drawn ONLY when the debug overlay wants them (CONFIG.DEBUG.showZoneLabels
+  // — a dev/tuning aid), and then only as faint guides.
   private drawZoneGrid(): void {
+    if (!CONFIG.DEBUG.showZoneLabels) return;
     const goal = this.layout.goal;
     const g = this.g();
-    g.lineStyle(2, CONFIG.COLORS.zoneLine, 0.5);
+    g.lineStyle(1, CONFIG.COLORS.zoneLine, 0.18);
     const fontPx = Math.round(Math.min(goal.width, goal.height) * 0.09);
     for (const id of ZONE_IDS) {
       const rect = zoneRect(id, goal);
       g.strokeRect(rect.x, rect.y, rect.width, rect.height);
-      if (CONFIG.DEBUG.showZoneLabels) {
-        const c = zoneCenter(id, goal);
-        const label = this.add
-          .text(c.x, c.y, id, { fontFamily: 'monospace', fontSize: fontPx + 'px', color: '#ffffff' })
-          .setOrigin(0.5)
-          .setAlpha(0.5);
-        this.world.add(label);
-      }
+      const c = zoneCenter(id, goal);
+      const label = this.add
+        .text(c.x, c.y, id, { fontFamily: 'monospace', fontSize: fontPx + 'px', color: '#ffffff' })
+        .setOrigin(0.5)
+        .setAlpha(0.28);
+      this.world.add(label);
     }
   }
 
@@ -2156,52 +2348,90 @@ export class GameScene extends Phaser.Scene {
     g.strokeCircle(0, 0, r);
   }
 
-  // Keeper drawn with FEET at the local origin (so rotation = a dive lean).
-  // Keeper's-eye (Keeper mode) shows the keeper BIG from BEHIND, so it uses a
-  // smaller head sitting above broad shoulders; the far Taker-mode keeper keeps
-  // its original chunky-head proportions (it is only a few px tall).
-  private drawKeeperGraphic(w: number, h: number): void {
+  // Keeper — an articulated silhouette (Track C) drawn with FEET at the local
+  // origin, so the container's rotation/scale reads as a dive lean/stretch. A
+  // tapered torso, posable arms (round-capped) ending in gloves, and legs. The
+  // `reach` param (0 = ready stance, arms spread; 1 = full stretch, arms up +
+  // out) is redrawn when the keeper commits a dive so the arms actually reach.
+  private drawKeeperGraphic(w: number, h: number, reach = 0): void {
+    const C = CONFIG.COLORS;
     const g = this.keeperGfx;
     g.clear();
-    const back = this.mode === 'keeper';
-    const headR = w * (back ? 0.2 : 0.34);
-    const armLen = w * 0.38;
-    const armY = -h + h * 0.22;
-    const gloveR = w * (back ? 0.22 : 0.2);
-    const torsoTop = back ? -h + headR * 1.7 : -h; // head sits above the torso (back view)
+    const lerp = Phaser.Math.Linear;
+    const headR = w * 0.27;
+    const shoulderY = -h * 0.73;
+    const hipY = -h * 0.4;
+    const shW = w * 0.5; // shoulder half-width
+    const hipW = w * 0.34;
 
-    g.fillStyle(CONFIG.COLORS.keeperBody, 1);
-    g.fillRoundedRect(-w / 2, torsoTop, w, -torsoTop, Math.max(6, w * 0.16));
-    g.fillRoundedRect(-w / 2 - armLen, armY, armLen, h * 0.13, 6);
-    g.fillRoundedRect(w / 2, armY, armLen, h * 0.13, 6);
+    // Legs (dark) — round-capped so they read as limbs, slightly apart.
+    g.lineStyle(w * 0.3, C.keeperShorts, 1);
+    g.lineBetween(-w * 0.17, hipY, -w * 0.15, -h * 0.02);
+    g.lineBetween(w * 0.17, hipY, w * 0.15, -h * 0.02);
 
-    g.fillStyle(CONFIG.COLORS.keeperGloves, 1);
-    g.fillCircle(-w / 2 - armLen, armY + h * 0.065, gloveR);
-    g.fillCircle(w / 2 + armLen, armY + h * 0.065, gloveR);
+    // Torso — tapered shoulders→hips, with a shaded right side for form.
+    g.fillStyle(C.keeperBody, 1);
+    g.fillPoints([{ x: -shW, y: shoulderY }, { x: shW, y: shoulderY }, { x: hipW, y: hipY }, { x: -hipW, y: hipY }] as Phaser.Geom.Point[], true);
+    g.fillStyle(C.keeperBodyShade, 1);
+    g.fillPoints([{ x: shW * 0.28, y: shoulderY }, { x: shW, y: shoulderY }, { x: hipW, y: hipY }, { x: hipW * 0.28, y: hipY }] as Phaser.Geom.Point[], true);
 
-    g.fillStyle(CONFIG.COLORS.keeperSkin, 1);
-    g.fillCircle(0, back ? -h + headR : -h + headR * 0.2, headR);
+    // Arms → gloves, posed between a ready spread and a full upward stretch.
+    const gx = lerp(w * 0.66, w * 0.78, reach);
+    const gy = lerp(shoulderY + h * 0.05, shoulderY - h * 0.2, reach);
+    g.lineStyle(w * 0.23, C.keeperBody, 1);
+    g.lineBetween(-shW * 0.78, shoulderY, -gx, gy);
+    g.lineBetween(shW * 0.78, shoulderY, gx, gy);
+    const gloveR = w * 0.2;
+    g.fillStyle(C.keeperGloves, 1);
+    g.fillCircle(-gx, gy, gloveR);
+    g.fillCircle(gx, gy, gloveR);
+    g.fillStyle(C.keeperGlovesShade, 1);
+    g.fillCircle(-gx + gloveR * 0.28, gy + gloveR * 0.3, gloveR * 0.5);
+    g.fillCircle(gx - gloveR * 0.28, gy + gloveR * 0.3, gloveR * 0.5);
+
+    // Head.
+    g.fillStyle(C.keeperSkin, 1);
+    g.fillCircle(0, shoulderY - headR * 1.02, headR);
+    g.fillStyle(C.keeperSkinShade, 1);
+    g.fillCircle(headR * 0.34, shoulderY - headR * 0.86, headR * 0.5);
   }
 
-  // CPU taker (Keeper mode) — a simple back-view striker, FEET at the local origin
-  // so a rotation reads as a body lean (the tell). Kept deliberately minimal.
+  // CPU taker (Keeper mode) — a red striker silhouette, FEET at the local origin
+  // so a rotation reads as a body lean (the pre-strike tell). Same articulated
+  // build as the keeper: legs, tapered torso, arms at the sides, head.
   private drawTakerGraphic(w: number, h: number): void {
     const C = CONFIG.COLORS;
     const g = this.takerGfx;
     g.clear();
-    const headR = w * 0.32;
-    const legW = w * 0.34;
-    const legTop = -h * 0.42; // legs from here down to the feet (origin)
+    const headR = w * 0.26;
+    const shoulderY = -h * 0.74;
+    const hipY = -h * 0.42;
+    const shW = w * 0.46;
+    const hipW = w * 0.32;
 
-    // Legs (two), then shorts band, torso, head — drawn bottom-up.
-    g.fillStyle(C.takerShorts, 1);
-    g.fillRoundedRect(-w / 2, legTop, legW, -legTop, Math.max(3, w * 0.1));
-    g.fillRoundedRect(w / 2 - legW, legTop, legW, -legTop, Math.max(3, w * 0.1));
+    // Legs (dark shorts).
+    g.lineStyle(w * 0.3, C.takerShorts, 1);
+    g.lineBetween(-w * 0.16, hipY, -w * 0.14, -h * 0.02);
+    g.lineBetween(w * 0.16, hipY, w * 0.16, -h * 0.02);
 
+    // Torso.
     g.fillStyle(C.takerBody, 1);
-    g.fillRoundedRect(-w / 2, -h + headR, w, -(-h + headR) + legTop, Math.max(6, w * 0.16));
+    g.fillPoints([{ x: -shW, y: shoulderY }, { x: shW, y: shoulderY }, { x: hipW, y: hipY }, { x: -hipW, y: hipY }] as Phaser.Geom.Point[], true);
+    g.fillStyle(C.takerBodyShade, 1);
+    g.fillPoints([{ x: shW * 0.28, y: shoulderY }, { x: shW, y: shoulderY }, { x: hipW, y: hipY }, { x: hipW * 0.28, y: hipY }] as Phaser.Geom.Point[], true);
 
+    // Arms at the sides (round-capped), hands as small skin circles.
+    g.lineStyle(w * 0.18, C.takerBody, 1);
+    g.lineBetween(-shW * 0.8, shoulderY, -w * 0.5, hipY + h * 0.04);
+    g.lineBetween(shW * 0.8, shoulderY, w * 0.5, hipY + h * 0.04);
     g.fillStyle(C.takerSkin, 1);
-    g.fillCircle(0, -h + headR * 0.9, headR);
+    g.fillCircle(-w * 0.5, hipY + h * 0.04, w * 0.1);
+    g.fillCircle(w * 0.5, hipY + h * 0.04, w * 0.1);
+
+    // Head.
+    g.fillStyle(C.takerSkin, 1);
+    g.fillCircle(0, shoulderY - headR * 1.02, headR);
+    g.fillStyle(C.takerSkinShade, 1);
+    g.fillCircle(headR * 0.34, shoulderY - headR * 0.86, headR * 0.5);
   }
 }

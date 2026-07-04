@@ -29,19 +29,47 @@ const GAME = {
 // COLORS — every colour as a 0xRRGGBB number for Phaser graphics.
 // ─────────────────────────────────────────────────────────────────────────────
 const COLORS = {
-  // Backdrop behind/above the goal line — a dark stadium tone. This is the key
-  // contrast move: it breaks up the all-green screen and makes the white goal
-  // frame and net pop.
-  stadium: 0x0d1b2a, // dark navy stand shadow
-  stadiumBand: 0x16344a, // a lighter band suggesting stands/crowd
+  // ── STADIUM / SKY (Track C aesthetic rework) ───────────────────────────────
+  // A night match under floodlights: a deep dusk-to-night sky gradient behind
+  // banked crowd tiers, so the lit pitch + white goal read as the bright focal
+  // point. The gradient runs skyTop (high, near-black indigo) → skyHorizon (a
+  // warm glow where the stands meet the pitch).
+  skyTop: 0x070b1a, // near-black indigo at the very top
+  skyHorizon: 0x223a5e, // lifted, slightly warm blue where the crowd sits
+  stadium: 0x0d1b2a, // legacy backstop fill (kept so nothing renders transparent)
+  stadiumBand: 0x16344a, // legacy — no longer the main backdrop
 
-  pitch: 0x2f7d33, // grass (richer, less flat than before)
-  pitchStripe: 0x276b2c, // mowed-stripe alternate
+  // Crowd — tiers of small 2-tone silhouette cells. Kept DARK + desaturated so
+  // the crowd reads as a mass in shadow and never competes with the pitch; a
+  // sprinkle of the accent palette per cell gives it life. Brightens on a goal.
+  crowdDark: 0x0c1424, // the shaded base of the stand
+  crowdCellA: 0x1b2740, // most crowd cells (cool shadow tone)
+  crowdCellB: 0x27324d, // a lighter minority (rows catching the lights)
+  crowdAccents: [0x2657d6, 0xe5202e, 0x16a34a, 0xf2c14e, 0xcfd8e6], // rare bright specks (flags/shirts)
+
+  // Floodlights — cool-white banks up top with a soft glow pool.
+  floodlightPylon: 0x2a3550,
+  floodlightLamp: 0xfff6d8,
+  floodlightGlow: 0xbfd0ff,
+
+  // Perimeter advertising hoardings — a bright band at the goal line (also the
+  // thing a wide/over shot thuds into). Alternating panels in the host palette.
+  hoardingBase: 0x0f1830,
+  hoardingPanels: [0x14213d, 0x1c2b4d],
+  hoardingTrim: 0x3a6ea5,
+
+  // Pitch — a richer, lit-from-above green. A brighter centre pool (under the
+  // lights) falling to darker edges is painted on top of the mow stripes.
+  pitch: 0x1f8a3b, // grass base (more saturated, "floodlit" green)
+  pitchStripe: 0x18762f, // mowed-stripe alternate
+  pitchLightPool: 0x33a94e, // the bright pool under the floodlights (centre)
+  pitchEdgeShade: 0x125427, // darker toward the edges (vignette on the turf)
   boxLine: 0xf5f5f5, // penalty-box / spot markings
 
-  goalFrame: 0xfafafa, // posts + crossbar
-  goalFrameShadow: 0x8a9097,
-  net: 0xffffff,
+  goalFrame: 0xffffff, // posts + crossbar (front face)
+  goalFrameSide: 0xc7d0dc, // the shaded side face that sells the frame's depth
+  goalFrameShadow: 0x0a1220, // cast shadow on the ground behind the frame
+  net: 0xeaf2ff, // a faintly cool white net under the lights
   zoneLine: 0xffffff, // 3x2 grid lines drawn on the goal mouth
 
   // Ball modelled on the adidas "Trionda" (FIFA World Cup 2026 official ball):
@@ -53,15 +81,23 @@ const COLORS = {
   ballGold: 0xf2c14e, // gold trophy accent
   ballOutline: 0xb8c0c8,
 
-  keeperBody: 0x1565c0, // keeper kit (blue — strong contrast vs green + navy)
-  keeperGloves: 0xffeb3b,
+  // Keeper kit — a vivid amber/orange that pops against both the green pitch and
+  // the night sky (real keepers wear a colour distinct from both teams). Shaded
+  // second tone for simple limb modelling.
+  keeperBody: 0xff9e2c, // keeper shirt (bright amber)
+  keeperBodyShade: 0xe07d10, // shaded side of shirt/limbs
+  keeperShorts: 0x1a2233, // dark shorts
+  keeperGloves: 0xf5f7fb, // near-white gloves (were garish yellow)
+  keeperGlovesShade: 0xc2ccd8,
   keeperSkin: 0xe8b38a,
+  keeperSkinShade: 0xc98f68,
 
-  // CPU taker (Keeper mode) — a red kit so it reads as the "other team" vs the
-  // blue keeper.
-  takerBody: 0xd32f2f,
-  takerShorts: 0x1a1a1a,
-  takerSkin: 0xc98a5e,
+  // CPU taker (Keeper mode) — a crisp red kit so it reads as the "other team".
+  takerBody: 0xe4242f,
+  takerBodyShade: 0xb3151f,
+  takerShorts: 0x141821,
+  takerSkin: 0xd79a6e,
+  takerSkinShade: 0xb87c52,
 
   debugText: 0x00ff66,
   debugBg: 0x000000,
@@ -174,6 +210,38 @@ const GEOMETRY = {
     //  figure stays human-proportioned in both orientations (≈ the taker-view keeper).
     takerHeightFrac: 0.12, // far taker height / screen height (small)
     takerAspect: 0.43, // far taker width : height
+  },
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STADIUM (Track C aesthetic rework) — the procedural night-match backdrop:
+// sky gradient, floodlights, banked crowd, perimeter hoardings, pitch lighting.
+// Purely presentational; all fractions of the live screen so it scales per device.
+// ─────────────────────────────────────────────────────────────────────────────
+const STADIUM = {
+  // Crowd tiers filling the stand area (sky above the goal line, down to the
+  // hoardings). A grid of small cells with seeded per-cell colour variance.
+  crowd: {
+    rows: 9, // tiers of spectators from the hoardings up toward the sky
+    cellFrac: 0.026, // approx cell size as a fraction of screen width
+    gapFrac: 0.2, // gap between cells as a fraction of a cell (breathing room)
+    accentChance: 0.12, // chance a cell is a bright accent speck (flag/shirt)
+    lighterChance: 0.3, // chance a cell uses the lighter (lights-catching) tone
+    topFadeRows: 3, // the top N rows fade toward the sky so the stand melts into night
+    goalFlashAlpha: 0.5, // extra brightness the whole crowd pulses to on a goal
+    goalFlashMs: 260,
+  },
+  // Floodlight pylons + lamp banks along the top of the stands.
+  floodlights: {
+    count: 2, // banks (left + right); positioned at these x fractions
+    xFracs: [0.2, 0.8],
+    lampGlowFrac: 0.13, // glow-pool radius as a fraction of screen width
+    lampBankFrac: 0.11, // lamp bank width as a fraction of screen width
+  },
+  // Perimeter hoardings — a lit ad band sitting on the goal line.
+  hoardings: {
+    heightFrac: 0.035, // band height as a fraction of screen height
+    panelFrac: 0.14, // panel width as a fraction of screen width
   },
 } as const;
 
@@ -615,7 +683,9 @@ const JUICE = {
 const DEBUG = {
   enabledByDefault: true, // show the overlay on load during development
   toggleKey: 'D', // keyboard toggle (desktop)
-  showZoneLabels: true, // label the 3x2 grid cells (TL, TM, ...)
+  showZoneLabels: false, // draw the faint 3x2 grid + TL/TM/… letters on the goal.
+  //  Off for the polished look (the live aim reticle already shows the target);
+  //  flip on as a tuning aid. Track C.
 } as const;
 
 // Single exported object — import { CONFIG } and read CONFIG.<group>.<value>.
@@ -623,6 +693,7 @@ export const CONFIG = {
   GAME,
   COLORS,
   GEOMETRY,
+  STADIUM,
   INPUT,
   AIM,
   FLIGHT,

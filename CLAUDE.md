@@ -183,8 +183,9 @@ practice toggle + switches clean. Difficulty button still sets the CPU **keeper*
 ## Design rework (owner request 2026-07-04) — plan: `docs/design-rework-plan.md`
 Full audit + category research → Tracks **A correctness / B feedback / C aesthetics**.
 Agreed model split: Track A core on Fable, A3/A5 + Track B on Sonnet, Track C on Opus.
-- **Track A (A1-A5) + Track B (B1-B7): DONE (awaiting owner playtest ⏸).** Full detail
-  in HANDOFF.md. Track A also fixed the third reported bug (posts/crossbar now exist —
+- **Track A (A1-A5) + Track B (B1-B7): DONE + LIVE IN PRODUCTION** (owner authorized
+  the deploy 2026-07-04). Full detail in HANDOFF.md. Track A also fixed the third
+  reported bug (posts/crossbar now exist —
   a landing in the woodwork band clangs off the frame, "post" outcome, 15% seeded
   lucky deflect-in) and four fairness details (keeper reads aimed-not-landed zone,
   elliptical scatter, tighter margin, a resize can no longer silently drop a resolved
@@ -222,6 +223,41 @@ Agreed model split: Track A core on Fable, A3/A5 + Track B on Sonnet, Track C on
     gloves on saves / landing on goals; timeScale restored; no errors).
   - ⏸ Playtest knobs: RESOLUTION.diveTravelMs / powerReachPenalty, CPU_KEEPER.
     reactionDelay, CPU_TAKER.flightTimeSlow/Fast, FLIGHT.flightDurationSlow/Fast.
-- **Next:** Track C (aesthetic rework) on Opus. See the plan doc §Part 3 and HANDOFF.md.
+- **Track C (aesthetic rework): DONE (awaiting owner playtest ⏸).** A full procedural
+  night-match restyle (no asset files; all in CONFIG). New `CONFIG.STADIUM` group +
+  an expanded `CONFIG.COLORS` palette.
+  - **C1 stadium** (`drawBackground` → `drawSky`/`drawCrowd`/`drawStadiumFloodlights`/
+    `drawPitch`/`drawHoardings`): a dusk→night sky gradient, banked crowd tiers (seeded
+    per-cell 2-tone + rare bright accent specks, fading into the sky at the top; pulses
+    brighter on a goal via `flashCrowd`), floodlight pylons + glow pools, a lit pitch
+    (mow stripes + a centre light-pool falling to shaded edges), and perimeter ad
+    hoardings on the goal line. The old flat navy band + `drawFloodlights` are gone.
+  - **C1b goal frame** now has depth: a shaded receding side-face, a bright front face,
+    a highlight edge, a soft floodlit glow, and a ground shadow (both taker `drawGoal`
+    and keeper-view `drawNearGoalFrame`).
+  - **C2 characters**: `drawKeeperGraphic`/`drawTakerGraphic` rewritten as articulated
+    silhouettes (tapered torso, round-capped limbs, gloves, head, 2-tone shading). The
+    keeper takes a `reach` pose — arms spread when set, up-and-out mid-dive (redrawn in
+    `diveKeeperTo`). The CPU taker does a short **run-up** (steps onto the ball with a
+    bob over the ready+tell window) in `beginKeeperReaction`.
+  - **C4 UI**: a rounded scoreboard backing panel lifts the HUD off the busy stadium;
+    the MODE/difficulty buttons restyled to match; the debug 3x2 zone grid + TL/TM/…
+    letters no longer clutter the goal (now gated behind `DEBUG.showZoneLabels`, default
+    OFF — the live aim reticle already shows the target).
+  - **C5 aim read**: the aim guide line is drawn as the PREDICTED curved flight (bows by
+    the same curve·curveGain·goalWidth the real shot will), so a curled swipe visibly
+    wraps toward the target.
+  - **Deferred (deliberate):** the dedicated UI camera (old flaw B9 — the 0.9 base zoom
+    slightly insets the pinned HUD) was NOT done — low severity, high regression risk
+    (dual-camera ignore-lists touch every object + input hit-testing); the scoreboard
+    panel makes it a non-issue visually. C3 "flying gloves cursor" is covered by the
+    articulated keeper now visibly reaching its gloves to the dive target.
+  - Verified: `npm run build` clean; both functional regression suites still green
+    (14/14 A3/B; the one legacy A1 line is the known harness sampling flake — re-confirmed
+    via the trace script that goals settle at the exact landing point); screenshots of
+    both views + the curved aim guide reviewed.
+  - ⏸ Owner playtest before this goes live. Tuning knobs: all of `CONFIG.STADIUM` +
+    the new `CONFIG.COLORS` stadium/character entries.
+- **Design rework COMPLETE** (A + B live; C awaiting the playtest sign-off to deploy).
 
 ## Then — Phase 6 (online 2-player). Still later; the provider-swap keystone holds.

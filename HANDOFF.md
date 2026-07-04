@@ -1,4 +1,4 @@
-# Handoff — continue the Penalty Shootout build (next: design-rework Track C on Opus)
+# Handoff — Penalty Shootout (design rework COMPLETE; A+B live, C awaiting playtest)
 
 Paste the **Prompt block** below into a fresh Claude Code session. Everything under
 it is context for that session. **Source of truth order:** the owner's phased plan
@@ -36,9 +36,13 @@ clashes).
 > plainly. Develop on branch `claude/fable5-design-rework-1avwyo`; commit + push
 > each working step there. Don't open a PR unless I ask.
 >
-> **We are executing `docs/design-rework-plan.md`** (read it in full). Track A
-> (A1-A5, correctness) and Track B (B1-B7, feedback/feel) are DONE (⏸ owner
-> playtest). Remaining: **Track C (aesthetic rework) on Opus.**
+> **`docs/design-rework-plan.md` is fully executed.** Track A (correctness) + Track B
+> (feedback/feel) are DONE and **LIVE in production**; Track C (aesthetic rework) is
+> DONE on this branch and **awaiting the owner's playtest before it's deployed live**.
+> There is no queued build work — the next session likely responds to owner playtest
+> feedback, then (on approval) deploys Track C to production the same way A+B went
+> (fast-forward the default branch `claude/penalty-shootout-setup-9bs643`), or moves on
+> to Phase 6 (online).
 
 ---
 
@@ -249,6 +253,58 @@ Track A fixed the owner's three worst reports; Track B made every outcome unmist
   1000ms window before any reset, and (c) the newer dedicated Track A3/B suite (which
   samples immediately rather than polling) passing consistently across repeated runs.
   Worth an eye on-device regardless, per the "headless-green ≠ device-acceptable" rule.
+
+### Track C — aesthetic rework (Opus) — DONE, awaiting playtest ⏸
+A full procedural night-match restyle — **no asset files**, everything through CONFIG.
+New `CONFIG.STADIUM` group + a big `CONFIG.COLORS` expansion (sky/crowd/floodlight/
+hoarding/pitch-lighting/goal-depth/character tones). Resolution + the kick loop are
+untouched (the plan's "C rewrites the draw* layer only").
+- **C1 stadium** — `drawBackground` now composes, back-to-front: `drawSky` (a dusk→night
+  vertical gradient via `fillGradientStyle`), `drawCrowd` (banked tiers of seeded 2-tone
+  cells + rare bright accent specks, top rows fading into the sky; a goal pulses the whole
+  crowd brighter via `flashCrowd`, wired in `showOutcome`), `drawStadiumFloodlights`
+  (pylons + lamp banks + stacked-disc glow pools), `drawPitch` (mow stripes + a centre
+  light-pool + shaded edges = an on-turf vignette), `drawHoardings` (perimeter ad panels
+  on the goal line — also what a wide/over miss thuds into). The old flat navy band and
+  the bloom-era `drawFloodlights` were removed.
+- **C1b goal frame** — `drawGoal` + `drawNearGoalFrame` now have depth: a shaded receding
+  side face, a bright front face + highlight edge, a soft floodlit glow, and a ground
+  shadow under the posts.
+- **C2 characters** — `drawKeeperGraphic`/`drawTakerGraphic` are now articulated
+  silhouettes (tapered torso via `fillPoints`, round-capped limbs, gloves, 2-tone
+  shading), feet-at-origin kept so the dive lean/stretch still works. The keeper takes a
+  `reach` pose param (0 = ready spread, 1 = arms up-and-out) and `diveKeeperTo` redraws it
+  reaching when a dive commits. The CPU taker does a short **run-up** (jogs onto the ball
+  with a bob over the ready+tell window) at the top of `beginKeeperReaction`.
+- **C4 UI** — a rounded scoreboard backing panel (`scorePanel`) lifts the HUD off the busy
+  stadium; MODE/difficulty buttons restyled to match; the always-on debug 3x2 zone grid +
+  "TL/TM/…" letters are gone from normal play (`DEBUG.showZoneLabels` now defaults OFF and
+  only draws a faint guide when on — the live aim reticle already shows the target).
+- **C5 aim read** — `drawSwipeFeedback` draws the aim guide as the PREDICTED curved flight
+  (bows by the same `curve·curveGain·goalWidth` the real shot uses), so a curled swipe
+  visibly wraps toward the target.
+- **Deliberately deferred:** the dedicated UI camera (old flaw B9 — the 0.9 base zoom
+  slightly insets the pinned HUD) — low severity, high regression risk (a dual-camera
+  ignore-list touches every object + input hit-testing), and the new scoreboard panel
+  makes it a visual non-issue. C3's "flying gloves cursor" is covered by the articulated
+  keeper visibly reaching its gloves to the dive target.
+- **Verified:** build clean; both functional regression suites green (14/14 A3/B). The one
+  legacy `verify-track-a.mjs` A1 line still intermittently "fails" — re-confirmed (again)
+  it's the harness sampling race / occasional missed scripted-swipe, NOT a regression: the
+  `trace-goal.mjs` script shows goals settle at the EXACT landing point and hold ~1s before
+  the next kick resets. Screenshots of taker + keeper views (portrait/landscape) and the
+  curved aim guide were reviewed for the look.
+- ⏸ **Owner playtest before deploy.** When approved, deploy exactly as A+B went live:
+  `git push origin claude/fable5-design-rework-1avwyo:claude/penalty-shootout-setup-9bs643`
+  (a fast-forward of the default/production branch Vercel auto-deploys).
+
+## Deploy note — how "live" works here
+There is no `main`/`master`. The repo default (and Vercel production) branch is
+`claude/penalty-shootout-setup-9bs643`. Work happens on `claude/fable5-design-rework-1avwyo`
+and reaches production by fast-forwarding the default branch to it (both are in lockstep
+history — FF only, no merge commits). Track A+B were pushed live this way on 2026-07-04
+with owner authorization; Track C is committed on the working branch but NOT yet on the
+production branch (awaiting playtest).
 
 ## (Superseded) earlier Phase-4 expectation
 Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a
