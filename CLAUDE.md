@@ -256,8 +256,8 @@ Agreed model split: Track A core on Fable, A3/A5 + Track B on Sonnet, Track C on
     (14/14 A3/B; the one legacy A1 line is the known harness sampling flake — re-confirmed
     via the trace script that goals settle at the exact landing point); screenshots of
     both views + the curved aim guide reviewed.
-  - ⏸ Owner playtest before this goes live. Tuning knobs: all of `CONFIG.STADIUM` +
-    the new `CONFIG.COLORS` stadium/character entries.
-- **Design rework COMPLETE** (A + B live; C awaiting the playtest sign-off to deploy).
+  - **LIVE IN PRODUCTION** (owner authorized the deploy 2026-07-04). Tuning knobs:
+    all of `CONFIG.STADIUM` + the new `CONFIG.COLORS` stadium/character entries.
+- **Design rework COMPLETE — Tracks A, B, and C are all live in production.**
 
 ## Then — Phase 6 (online 2-player). Still later; the provider-swap keystone holds.

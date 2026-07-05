@@ -1,4 +1,4 @@
-# Handoff — Penalty Shootout (design rework COMPLETE; A+B live, C awaiting playtest)
+# Handoff — Penalty Shootout (design rework COMPLETE; A+B+C all live in production)
 
 Paste the **Prompt block** below into a fresh Claude Code session. Everything under
 it is context for that session. **Source of truth order:** the owner's phased plan
@@ -36,13 +36,11 @@ clashes).
 > plainly. Develop on branch `claude/fable5-design-rework-1avwyo`; commit + push
 > each working step there. Don't open a PR unless I ask.
 >
-> **`docs/design-rework-plan.md` is fully executed.** Track A (correctness) + Track B
-> (feedback/feel) are DONE and **LIVE in production**; Track C (aesthetic rework) is
-> DONE on this branch and **awaiting the owner's playtest before it's deployed live**.
-> There is no queued build work — the next session likely responds to owner playtest
-> feedback, then (on approval) deploys Track C to production the same way A+B went
-> (fast-forward the default branch `claude/penalty-shootout-setup-9bs643`), or moves on
-> to Phase 6 (online).
+> **`docs/design-rework-plan.md` is fully executed and LIVE.** Track A (correctness),
+> Track B (feedback/feel), and Track C (aesthetic rework) are all done and deployed to
+> production. There is no queued build work — the next session likely responds to
+> owner on-device playtest feedback (tuning knobs are documented per track below), or
+> moves on to Phase 6 (online 2-player).
 
 ---
 
@@ -294,17 +292,15 @@ untouched (the plan's "C rewrites the draw* layer only").
   `trace-goal.mjs` script shows goals settle at the EXACT landing point and hold ~1s before
   the next kick resets. Screenshots of taker + keeper views (portrait/landscape) and the
   curved aim guide were reviewed for the look.
-- ⏸ **Owner playtest before deploy.** When approved, deploy exactly as A+B went live:
-  `git push origin claude/fable5-design-rework-1avwyo:claude/penalty-shootout-setup-9bs643`
-  (a fast-forward of the default/production branch Vercel auto-deploys).
+- **LIVE IN PRODUCTION** (owner authorized the deploy 2026-07-04, same day as A+B).
 
 ## Deploy note — how "live" works here
 There is no `main`/`master`. The repo default (and Vercel production) branch is
 `claude/penalty-shootout-setup-9bs643`. Work happens on `claude/fable5-design-rework-1avwyo`
 and reaches production by fast-forwarding the default branch to it (both are in lockstep
-history — FF only, no merge commits). Track A+B were pushed live this way on 2026-07-04
-with owner authorization; Track C is committed on the working branch but NOT yet on the
-production branch (awaiting playtest).
+history — FF only, no merge commits, always verified `--is-ancestor` clean before pushing).
+Tracks A, B, and C were all pushed live this way on 2026-07-04 with owner authorization.
+Both branches are currently at the same commit (`b66b4bf`).
 
 ## (Superseded) earlier Phase-4 expectation
 Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a

@@ -1,10 +1,11 @@
 # Design Rework — One-Shot Action Plan
 
-**Status: ALL TRACKS BUILT.** Track A (A1-A5) + Track B (B1-B7) are DONE and
-**LIVE in production** (the production branch was fast-forwarded 2026-07-04 with
-owner authorization). Track C (aesthetic rework) is DONE on the working branch,
-**awaiting owner playtest ⏸ before it goes live** (per the project's ⏸ convention;
-the owner deploys visual changes after playtest). See CLAUDE.md / HANDOFF.md.
+**Status: COMPLETE — ALL TRACKS LIVE IN PRODUCTION.** Track A (A1-A5), Track B
+(B1-B7), and Track C (aesthetic rework) are all done and deployed to the
+production branch (owner-authorized, 2026-07-04). The design rework is finished;
+still worth an owner on-device playtest per the project's standing rule
+("headless-green ≠ device-acceptable"), but nothing is blocked on it. See
+CLAUDE.md / HANDOFF.md.
 Date: 2026-07-03. Branch: `claude/fable5-design-rework-1avwyo`.
 
 Goal: make the game **aesthetically attractive** and **functionally trustworthy** in one
