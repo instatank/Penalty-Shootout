@@ -19,3 +19,12 @@ Concept cards appended by `/wrap`. Format + method: `playbook/LEARNING_METHOD.md
 - Where else: (pending — answer at next wrap)
 - Quiz question: "A check that reads live system state passes 8 runs out of 10 with no code changes in between — what's the first fix to try?"
 - Internalized: no
+
+### 2026-07-12 — The shared playbook was unreachable from this session (cross-repo docs dependency)
+
+- What happened: CLAUDE.md's session-start step says to read `playbook/PLAYBOOK.md` from the `instatank/time-tracker` repo (locally or via GitHub). This session's access was scoped to `instatank/penalty-shootout` only, so both routes were denied and the shared SOPs/learning method couldn't be consulted — the session had to fall back to the copies/summaries inside this repo (`.claude/skills/ship`, `/wrap`, LEARNINGS.md's own format examples).
+- Concept: a "single source of truth" stored in a DIFFERENT repo is a hard runtime dependency on cross-repo access — any session/tool/person without that access silently loses the rulebook. Either grant the access with the task, or keep a self-sufficient copy of the operating rules inside each repo that needs them (and treat the external one as the master to sync from).
+- In my words: (pending — answer at next wrap)
+- Where else: (pending — answer at next wrap)
+- Quiz question: "Your project docs point to a rulebook in another repo — what must be true for every future work session for that pointer to actually work, and what's the fallback if it isn't?"
+- Internalized: no

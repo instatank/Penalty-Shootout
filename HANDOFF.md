@@ -65,7 +65,9 @@ clashes).
   selector (EASY/MED/HARD). **Plus a critical input bugfix** — see below.
 - Aesthetics carried through: Trionda ball, net shake on goal, celebratory banner,
   procedural crowd SFX.
-- **Branch:** `claude/penalty-shootout-setup-9bs643` (develop + push here).
+- **Branch:** `claude/penalty-shootout-setup-9bs643` is the DEFAULT + production branch;
+  development happens on each session's designated `claude/...` branch and goes live by
+  fast-forwarding the default to it (see "Deploy note" below).
 - **Every phase is at an owner-playtest ⏸ checkpoint** (not yet signed off on device).
 
 ## Architecture you'll reuse (don't relearn the hard way)
