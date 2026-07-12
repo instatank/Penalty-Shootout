@@ -114,6 +114,7 @@ export class GameScene extends Phaser.Scene {
   private scoreText!: Phaser.GameObjects.Text;
   private scoreSub!: Phaser.GameObjects.Text;
   private scoreDots!: Phaser.GameObjects.Graphics;
+  private scoreCX = 0; // centre-x of the right-aligned scoreboard panel (set by layoutSessionUI)
   private endBg!: Phaser.GameObjects.Rectangle;
   private endTitle!: Phaser.GameObjects.Text;
   private endScore!: Phaser.GameObjects.Text;
@@ -258,6 +259,7 @@ export class GameScene extends Phaser.Scene {
         resolvePenalty, // NOTE: takes (taker, keeper, seed, flightMs) since Track A2
         kickFlightMs,
         getBallPos: () => ({ x: this.ball.x, y: this.ball.y }),
+        getBallAlpha: () => this.ball.alpha, // save-vanish check (owner 2026-07-12)
         getGoalRect: () => ({ ...this.layout.goal }),
         createShootout,
         recordKick, // expose the pure shootout logic for headless unit tests
@@ -947,11 +949,12 @@ export class GameScene extends Phaser.Scene {
 
   // ── Session UI: scoreboard, difficulty, end screen (Phase 3) ──────────────
   private buildSessionUI(): void {
-    // Scoreboard (top-centre): a rounded dark panel (Track C — lifts the HUD off
-    // the busy stadium) holding the score line, kick dots, and phase/round line.
+    // Scoreboard (TOP-RIGHT, owner 2026-07-12 — the debug readout owns the top-
+    // left): a rounded dark panel (Track C — lifts the HUD off the busy stadium)
+    // holding the score line, kick dots, and phase/round line.
     this.scorePanel = this.add.graphics();
-    this.scoreText = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '24px', color: '#ffffff' }).setOrigin(0.5, 0);
-    this.scoreSub = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '12px', color: '#9fb8d8' }).setOrigin(0.5, 0);
+    this.scoreText = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '18px', color: '#ffffff' }).setOrigin(0.5, 0);
+    this.scoreSub = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '11px', color: '#9fb8d8' }).setOrigin(0.5, 0);
     this.scoreDots = this.add.graphics();
     this.scoreboard = this.add.container(0, 0, [this.scorePanel, this.scoreText, this.scoreDots, this.scoreSub]).setDepth(960).setScrollFactor(0).setVisible(false);
 
@@ -975,18 +978,23 @@ export class GameScene extends Phaser.Scene {
 
   private layoutSessionUI(w: number, h: number): void {
     if (!this.scoreboard) return;
-    // Rounded scoreboard panel behind the score/sub/dots.
-    const panelW = Math.min(w * 0.82, 340);
-    const panelH = 86;
-    const panelX = (w - panelW) / 2;
+    // Rounded scoreboard panel behind the score/sub/dots — RIGHT-ALIGNED at the
+    // top (owner 2026-07-12) so it shares the top edge with the smaller top-left
+    // debug readout without overlapping.
+    const SB = CONFIG.UI.scoreboard;
+    const panelW = Math.min(w * SB.widthFrac, SB.maxWidthPx);
+    const panelH = SB.heightPx;
+    const panelX = w - panelW - SB.marginPx;
+    const panelY = SB.marginPx;
+    this.scoreCX = panelX + panelW / 2; // content centre (dots + texts follow the panel)
     const g = this.scorePanel;
     g.clear();
     g.fillStyle(0x0a1526, 0.74);
-    g.fillRoundedRect(panelX, 4, panelW, panelH, 14);
+    g.fillRoundedRect(panelX, panelY, panelW, panelH, 14);
     g.lineStyle(1.5, 0x3a6ea5, 0.5);
-    g.strokeRoundedRect(panelX, 4, panelW, panelH, 14);
-    this.scoreText.setScale(1).setPosition(w / 2, 9); // reset any in-flight score pop
-    this.scoreSub.setPosition(w / 2, 37);
+    g.strokeRoundedRect(panelX, panelY, panelW, panelH, 14);
+    this.scoreText.setScale(1).setPosition(this.scoreCX, panelY + 6); // reset any in-flight score pop
+    this.scoreSub.setPosition(this.scoreCX, panelY + 30);
     this.endBg.setPosition(w / 2, h / 2).setSize(w, h);
     this.endTitle.setPosition(w / 2, h * 0.4);
     this.endScore.setPosition(w / 2, h * 0.4 + 52);
@@ -1032,9 +1040,9 @@ export class GameScene extends Phaser.Scene {
     const g = this.scoreDots;
     g.clear();
     const s = this.shootout;
-    const cx = this.scale.width / 2;
+    const cx = this.scoreCX || this.scale.width / 2; // follow the right-aligned panel
     const slots = Math.max(s.regulationKicks, s.player.taken, s.opponent.taken);
-    const gap = 16;
+    const gap = 15;
     const r = 5;
     const rowW = (slots - 1) * gap;
     const drawRow = (results: boolean[], taken: number, y: number) => {
@@ -1049,8 +1057,8 @@ export class GameScene extends Phaser.Scene {
         }
       }
     };
-    drawRow(s.player.results, s.player.taken, 60);
-    drawRow(s.opponent.results, s.opponent.taken, 76);
+    drawRow(s.player.results, s.player.taken, CONFIG.UI.scoreboard.marginPx + 48);
+    drawRow(s.opponent.results, s.opponent.taken, CONFIG.UI.scoreboard.marginPx + 64);
   }
 
   private showEndScreen(winner: Side): void {
@@ -1167,11 +1175,17 @@ export class GameScene extends Phaser.Scene {
   // Keeper mode: a flick during the open dive window commits a dive (PRD §6).
   private onDiveSwipe(phase: SwipePhase, points: SwipePoint[]): void {
     if (this.state !== 'keeping') return; // window not open yet / already closed
-    if (phase !== 'end') return; // commit on release (one dive per window)
     if (this.diveCaptured) return; // already dived this window — locked in
     if (points.length < 2) return;
 
     const sample = deriveSwipe(points, this.scale.height);
+
+    // Responsiveness (owner, 2026-07-12): commit MID-GESTURE the moment the flick
+    // has clearly travelled — no more waiting for the finger to lift, so the dive
+    // launches the instant it is readable. A shorter/slower drag still commits on
+    // release exactly as before. (One dive per window either way.)
+    if (phase !== 'end' && sample.distance < this.scale.height * CONFIG.KEEPER.commitDistFrac) return;
+
     const zone = computeDive(sample, this.scale.width, this.scale.height);
 
     // Timing (Track A4): the raw ms between the strike and the flick's START.
@@ -1371,6 +1385,7 @@ export class GameScene extends Phaser.Scene {
       this.hitStop(CONFIG.JUICE.hitStop.saveMs); // "thunk" as the ball meets the gloves
       this.screenShake(CONFIG.JUICE.shake.saveAmt); // Tier 2, item 5
       await this.settleSave(handX, handY, result.reachMargin); // catch vs punch (Track B1)
+      await this.vanishBallIntoGloves(); // owner 2026-07-12 — the save SMOTHERS the ball
     } else if (result.outcome === 'post') {
       this.hitStop(CONFIG.JUICE.hitStop.saveMs * 0.6);
       this.screenShake(CONFIG.JUICE.shake.saveAmt * 0.8);
@@ -1604,6 +1619,22 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Keeper view (owner request 2026-07-12): a saved ball DISAPPEARS into the
+   *  gloves — after the catch/parry settles it fades + shrinks away (smothered)
+   *  instead of lying visibly in the box until the next kick. The alpha is
+   *  restored in resetBall. */
+  private vanishBallIntoGloves(): Promise<void> {
+    this.ballShadow.setVisible(false);
+    return this.tweenP({
+      targets: this.ball,
+      alpha: 0,
+      scaleX: this.ball.scaleX * 0.85,
+      scaleY: this.ball.scaleY * 0.85,
+      duration: CONFIG.JUICE.parry.vanishMs,
+      ease: 'Quad.easeIn',
+    });
+  }
+
   /** Track B2 — a goal that only just beat the keeper's reach still shows a
    *  small fingertip-graze spark (reuses the white net-spray texture/emitter). */
   private burstGraze(x: number, y: number): void {
@@ -1815,7 +1846,15 @@ export class GameScene extends Phaser.Scene {
     const g = this.fx;
     g.clear();
 
-    if (aim.targetZone) {
+    // Owner (2026-07-12): the aim guide (zone highlight + predicted-flight line +
+    // scatter ring + crosshair) is HIDDEN in real play — a visible pointer felt
+    // like a cheat; the swipe itself is the skill. Everything still computes
+    // (overlay + resolution are unchanged); DEBUG.showAimGuide re-draws it for
+    // tuning. The finger's own swipe trail below stays — it is input feedback,
+    // not target feedback.
+    const guide = CONFIG.DEBUG.showAimGuide;
+
+    if (guide && aim.targetZone) {
       const r = zoneRect(aim.targetZone, this.layout.goal);
       g.fillStyle(CONFIG.COLORS.zoneHighlight, 0.18);
       g.fillRect(r.x, r.y, r.width, r.height);
@@ -1834,6 +1873,8 @@ export class GameScene extends Phaser.Scene {
       g.lineTo(p.x, p.y);
     }
     g.strokePath();
+
+    if (!guide) return; // aim line / ring / reticle are tuning aids now
 
     // Aim line — drawn as the PREDICTED curved flight (Track C5): it bows
     // sideways by the same amount the real flight will (curve · curveGain ·
@@ -1864,7 +1905,8 @@ export class GameScene extends Phaser.Scene {
 
   private drawLandingMarker(p: { x: number; y: number }): void {
     const g = this.fx;
-    g.clear();
+    g.clear(); // always clear the swipe trail at kick-off
+    if (!CONFIG.DEBUG.showAimGuide) return; // the marker is a tuning aid now
     const r = Math.max(5, this.layout.ball.r * 0.35);
     g.lineStyle(3, CONFIG.COLORS.aimReticle, 0.9);
     g.strokeCircle(p.x, p.y, r);
@@ -1979,7 +2021,8 @@ export class GameScene extends Phaser.Scene {
     this.drawBallGraphic(this.layout.ball.r);
     // Keeper's-eye: at rest the ball sits far away (small). Taker view: full size.
     const restScale = this.mode === 'keeper' ? CONFIG.KEEPER.flightScaleStart : 1;
-    this.ball.setScale(restScale).setRotation(0).setPosition(this.layout.ball.x, this.layout.ball.y);
+    // setAlpha(1): a keeper-view save fades the ball out (vanishBallIntoGloves).
+    this.ball.setAlpha(1).setScale(restScale).setRotation(0).setPosition(this.layout.ball.x, this.layout.ball.y);
     // Grounded ball shadow at rest (Tier 1, item 2): on the ground, full size.
     const b = this.layout.ball;
     this.positionBallShadow(b.x, b.y + b.r * 0.9, restScale, 0);

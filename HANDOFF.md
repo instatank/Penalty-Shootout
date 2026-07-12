@@ -1,4 +1,4 @@
-# Handoff — Penalty Shootout (design rework COMPLETE; A+B+C all live in production)
+# Handoff — Penalty Shootout (design rework + 2026-07-12 feel/HUD tweaks all live in production)
 
 Paste the **Prompt block** below into a fresh Claude Code session. Everything under
 it is context for that session. **Source of truth order:** the owner's phased plan
@@ -33,14 +33,16 @@ clashes).
 > button — see CLAUDE.md).
 >
 > I'm a non-technical owner: write clear, well-commented code and explain decisions
-> plainly. Develop on branch `claude/fable5-design-rework-1avwyo`; commit + push
+> plainly. Develop on the session's designated `claude/...` branch; commit + push
 > each working step there. Don't open a PR unless I ask.
 >
-> **`docs/design-rework-plan.md` is fully executed and LIVE.** Track A (correctness),
-> Track B (feedback/feel), and Track C (aesthetic rework) are all done and deployed to
-> production. There is no queued build work — the next session likely responds to
-> owner on-device playtest feedback (tuning knobs are documented per track below), or
-> moves on to Phase 6 (online 2-player).
+> **`docs/design-rework-plan.md` is fully executed and LIVE**, and the owner's
+> 2026-07-12 feel/HUD tweak batch (keeper mid-gesture dive commit, save smothers the
+> ball, unsaveable pace+placement corners, hidden aim guide, right-aligned scoreboard
+> + compact debug box) is also LIVE — see CLAUDE.md "Feel & HUD tweaks". There is no
+> queued build work — the next session likely responds to owner on-device playtest
+> feedback (tuning knobs are documented per track below), or moves on to Phase 6
+> (online 2-player).
 
 ---
 
@@ -294,13 +296,33 @@ untouched (the plan's "C rewrites the draw* layer only").
   curved aim guide were reviewed for the look.
 - **LIVE IN PRODUCTION** (owner authorized the deploy 2026-07-04, same day as A+B).
 
+## Feel & HUD tweaks (owner request 2026-07-12) — DONE + LIVE
+Five owner-requested changes (full detail in CLAUDE.md "Feel & HUD tweaks"):
+1. **Keeper dive commits mid-gesture** once the flick travels `KEEPER.commitDistFrac`
+   (0.11 screen heights) — no waiting for finger lift; release-commit kept as fallback.
+2. **Keeper-view save smothers the ball** — fades+shrinks into the gloves after the
+   catch/parry settles (`vanishBallIntoGloves`, `JUICE.parry.vanishMs`); alpha restored
+   in `resetBall`. Taker view unchanged.
+3. **Unsaveable corners** — pure rule in `resolvePenalty` (`RESOLUTION.corner`): landing
+   within xFrac 0.15 of a post AND yFrac 0.22 of bar/ground at power ≥ 0.6 always scores
+   (woodwork band still wins; soft corner shots stay saveable). Keystone intact.
+4. **Aim guide hidden in play** — aim line/reticle/ring/zone highlight gated behind
+   `DEBUG.showAimGuide` (default OFF; the C5 curved guide still exists as a tuning aid).
+   Swipe trail + power meter kept. `drawLandingMarker` gated too.
+5. **HUD de-overlap** — debug readout compact (11px, word-wrap ≤ min(38% width, 250px),
+   hard top-left); scoreboard **right-aligned** top (`CONFIG.UI.scoreboard`); DBG button
+   below it. Checked portrait 390x844 + landscape 844x390.
+Verified headless 12/12 + screenshots. New dev hook: `__penalty.getBallAlpha()`.
+Tuning knobs: `KEEPER.commitDistFrac`, `RESOLUTION.corner.*`, `JUICE.parry.vanishMs`,
+`UI.scoreboard.*`, `DEBUG.showAimGuide`.
+
 ## Deploy note — how "live" works here
 There is no `main`/`master`. The repo default (and Vercel production) branch is
-`claude/penalty-shootout-setup-9bs643`. Work happens on `claude/fable5-design-rework-1avwyo`
-and reaches production by fast-forwarding the default branch to it (both are in lockstep
-history — FF only, no merge commits, always verified `--is-ancestor` clean before pushing).
-Tracks A, B, and C were all pushed live this way on 2026-07-04 with owner authorization.
-Both branches are currently at the same commit (`b66b4bf`).
+`claude/penalty-shootout-setup-9bs643`. Work happens on the session's designated
+`claude/...` branch and reaches production by fast-forwarding the default branch to it
+(FF only, no merge commits, always verified `--is-ancestor` clean before pushing).
+Tracks A, B, C went live this way on 2026-07-04; the feel/HUD tweak batch (from
+`claude/keeper-shooting-mechanics-5wmg87`) on 2026-07-12 — owner authorized both.
 
 ## (Superseded) earlier Phase-4 expectation
 Keeper mode currently runs as free practice. Phase 4 will almost certainly make it a

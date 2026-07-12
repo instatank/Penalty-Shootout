@@ -11,8 +11,10 @@
  * around where the hands have ACTUALLY reached at arrival. High power also
  * shrinks reach a touch; the extreme corners sit outside reach (unsaveable). So
  * the outcome matches the visible ball↔keeper interaction: ball meets keeper ⇒
- * save, ball beats keeper ⇒ goal. A small seeded band at the edge keeps
- * borderline shots lively (and replayable online). A shot landing in the thin
+ * save, ball beats keeper ⇒ goal. On top of the geometry, an explicit corner
+ * rule (RESOLUTION.corner, owner 2026-07-12) GUARANTEES that a shot landing in
+ * the extreme-corner window with real pace always scores. A small seeded band at
+ * the edge keeps borderline shots lively (and replayable online). A shot landing in the thin
  * post/crossbar band clangs off the woodwork instead — Track A3 — with a small
  * seeded chance of deflecting in anyway (still deterministic from the seed).
  * The keeper's hands position is computed the SAME way for every outcome (goal,
@@ -169,6 +171,18 @@ export function resolvePenalty(
   const offGoal = ln.x < 0 || ln.x > 1 || ln.y < 0 || ln.y > 1;
   if (offGoal) {
     return { outcome: 'miss', saved: false, scored: false, hitPost: false, keeperNorm: hands, timingQuality: diveProgress, reachMargin: Infinity };
+  }
+
+  // UNSAVEABLE CORNER (owner rule, 2026-07-12): a landing inside the extreme-
+  // corner window struck at/above corner.minPower ALWAYS scores — placement +
+  // pace together beat any keeper, even a perfect read. Checked after the
+  // woodwork band (the frame still wins) and after off-goal (it must be on
+  // target). reachMargin reports Infinity: the reach never got a say.
+  const CR = R.corner;
+  const inCornerX = ln.x <= CR.xFrac || ln.x >= 1 - CR.xFrac;
+  const inCornerY = ln.y <= CR.yFrac || ln.y >= 1 - CR.yFrac;
+  if (inCornerX && inCornerY && taker.power >= CR.minPower) {
+    return { outcome: 'goal', saved: false, scored: true, hitPost: false, keeperNorm: hands, timingQuality: diveProgress, reachMargin: Infinity };
   }
 
   // A hard shot is fractionally harder to reach/hold (shrinks the reach a touch).

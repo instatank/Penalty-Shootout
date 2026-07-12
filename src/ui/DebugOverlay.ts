@@ -26,16 +26,19 @@ export class DebugOverlay {
   constructor(scene: Phaser.Scene) {
     this.visible = CONFIG.DEBUG.enabledByDefault;
 
-    // Readout panel, pinned top-left. depth high so it sits above the pitch.
+    // Readout panel, pinned HARD to the top-left corner and kept compact (owner
+    // 2026-07-12: smaller + further left — the scoreboard owns the top-right).
+    // Word-wrap caps its width so it can never grow under the scoreboard panel.
     this.bg = scene.add
-      .rectangle(8, 8, 300, 120, CONFIG.COLORS.debugBg, 0.55)
+      .rectangle(4, 4, 220, 96, CONFIG.COLORS.debugBg, 0.55)
       .setOrigin(0, 0);
     this.text = scene.add
-      .text(16, 14, '', {
+      .text(9, 9, '', {
         fontFamily: 'monospace',
-        fontSize: '16px',
+        fontSize: '11px',
         color: '#' + CONFIG.COLORS.debugText.toString(16).padStart(6, '0'),
         lineSpacing: 2,
+        wordWrap: { width: this.wrapWidth(scene.scale.width) },
       })
       .setOrigin(0, 0);
 
@@ -43,9 +46,11 @@ export class DebugOverlay {
     this.container.setScrollFactor(0);
 
     // Always-present tap target so the overlay can be toggled on a phone.
-    // Anchored to the live right edge so it stays put through resize/rotation.
+    // Anchored to the live right edge, tucked BELOW the right-aligned scoreboard
+    // panel (which now owns the top-right corner).
+    const btnY = CONFIG.UI.scoreboard.marginPx + CONFIG.UI.scoreboard.heightPx + 8;
     this.button = scene.add
-      .text(scene.scale.width - 8, 8, 'DBG', {
+      .text(scene.scale.width - 8, btnY, 'DBG', {
         fontFamily: 'monospace',
         fontSize: '18px',
         color: '#ffffff',
@@ -61,8 +66,13 @@ export class DebugOverlay {
     // Desktop keyboard toggle.
     scene.input.keyboard?.on('keydown-' + CONFIG.DEBUG.toggleKey, () => this.toggle());
 
-    // Keep the button pinned to the right edge when the screen size changes.
-    const reanchor = (size: Phaser.Structs.Size) => this.button.setX(size.width - 8);
+    // Keep the button pinned to the right edge (and the readout's wrap width in
+    // step) when the screen size changes.
+    const reanchor = (size: Phaser.Structs.Size) => {
+      this.button.setX(size.width - 8);
+      this.text.setWordWrapWidth(this.wrapWidth(size.width));
+      if (this.visible) this.render();
+    };
     scene.scale.on('resize', reanchor);
     scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => scene.scale.off('resize', reanchor));
 
@@ -89,10 +99,16 @@ export class DebugOverlay {
     if (this.visible) this.render();
   }
 
+  /** Cap the readout's text width so the box stays clear of the right-aligned
+   *  scoreboard even on a narrow portrait phone. */
+  private wrapWidth(screenW: number): number {
+    return Math.min(screenW * 0.38, 250);
+  }
+
   private render(): void {
     this.text.setText(this.lines.join('\n'));
-    // Grow the backdrop to fit the text.
-    this.bg.width = Math.max(220, this.text.width + 16);
-    this.bg.height = Math.max(40, this.text.height + 12);
+    // Grow the backdrop to fit the (wrapped) text.
+    this.bg.width = Math.max(140, this.text.width + 10);
+    this.bg.height = Math.max(28, this.text.height + 10);
   }
 }

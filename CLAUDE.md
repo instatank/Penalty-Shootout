@@ -260,4 +260,31 @@ Agreed model split: Track A core on Fable, A3/A5 + Track B on Sonnet, Track C on
     all of `CONFIG.STADIUM` + the new `CONFIG.COLORS` stadium/character entries.
 - **Design rework COMPLETE — Tracks A, B, and C are all live in production.**
 
+## Feel & HUD tweaks (owner request 2026-07-12) — DONE + LIVE IN PRODUCTION
+Five small owner-requested changes, shipped same day (owner pre-authorized the deploy):
+1. **Keeper responsiveness:** a dive now commits **MID-GESTURE** the moment the flick
+   has travelled `CONFIG.KEEPER.commitDistFrac` (0.11) of the screen height — no more
+   waiting for the finger to lift. Short/slow drags still commit on release. Judged
+   timing unchanged (flick START time).
+2. **Save smothers the ball (keeper view):** after the catch/parry settles, the ball
+   fades+shrinks into the gloves (`vanishBallIntoGloves`, knob `JUICE.parry.vanishMs`);
+   alpha restored in `resetBall`. Keeper view only — taker-view saves unchanged.
+3. **Unsaveable corners:** a NEW pure rule in `resolvePenalty` (`RESOLUTION.corner`):
+   a landing inside the extreme-corner window (xFrac 0.15 / yFrac 0.22) struck at
+   power ≥ minPower (0.6) ALWAYS scores — beats even a perfect read. Checked after
+   the woodwork band (frame still wins) and off-goal. Zone centres sit OUTSIDE the
+   window; high power also scatters more, so precision+pace is a genuine skill shot.
+   Still pure/deterministic (keystone intact).
+4. **Aim guide hidden:** the aim line / crosshair / scatter ring / zone highlight no
+   longer draw during aiming (owner: felt like a cheat). Everything still COMPUTES —
+   gate is `DEBUG.showAimGuide` (default false; flip on to tune). The finger swipe
+   trail + power meter remain (input feedback, not target feedback).
+5. **HUD de-overlap:** debug readout is smaller (11px, word-wrapped, hard top-LEFT);
+   the scoreboard panel is **right-aligned** at the top (`CONFIG.UI.scoreboard`);
+   the DBG button tucks below the scoreboard. Verified portrait 390x844 + landscape.
+Verified headless 12/12 (corner rule incl. soft-shot-still-saveable + woodwork
+precedence + determinism; mid-gesture commit; save-vanish + alpha restore; timeScale
+restored) + screenshot review of both views/orientations. Dev hook added:
+`__penalty.getBallAlpha()`.
+
 ## Then — Phase 6 (online 2-player). Still later; the provider-swap keystone holds.

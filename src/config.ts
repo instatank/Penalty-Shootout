@@ -377,6 +377,13 @@ const KEEPER = {
   diveColThreshFrac: 0.05, // sideways flick (fraction of screen WIDTH) to commit Left/Right
   diveRowThreshFrac: 0.07, // upward flick (fraction of screen HEIGHT) to commit a HIGH dive
 
+  // Responsiveness (owner request 2026-07-12): the dive no longer waits for the
+  // finger to LIFT — it commits MID-GESTURE the moment the flick has travelled
+  // this far (fraction of screen height), so the keeper launches the instant the
+  // flick is readable. A shorter/slower drag still commits on release as before.
+  // (Judged timing is unchanged either way — it uses the flick's START time.)
+  commitDistFrac: 0.11,
+
   // Timing (Track A4): diveTiming = ms after the strike the flick STARTED, and
   // resolvePenalty races it against the ball's flight — commit while the ball
   // still has ≥ RESOLUTION.diveTravelMs of air time and the hands fully arrive;
@@ -421,6 +428,17 @@ const RESOLUTION = {
   // Shrunk from 0.18 (Track A5) — now that saves/misses/woodwork all read
   // honestly, a wide hidden coin-flip band was the last "I can't tell why that
   // resolved that way" gap; a thin band still keeps edge-of-reach shots lively.
+  // UNSAVEABLE CORNERS (owner request 2026-07-12): a shot that lands inside the
+  // extreme-corner window AND was struck with real pace ALWAYS scores — perfect
+  // placement + speed together beat any keeper, even a perfect read. The window
+  // is checked after the woodwork band (the frame still wins) and the 3x2 zone
+  // CENTRES sit outside it, so it takes genuine precision to find — a hard shot
+  // also scatters more (INPUT.kPower), which is the risk that pays for the reward.
+  corner: {
+    xFrac: 0.15, // within this of a post (fraction of goal width)
+    yFrac: 0.22, // within this of the crossbar or the ground (fraction of height)
+    minPower: 0.6, // pace at/above which a corner-window shot is unstoppable
+  },
   postDeflectInChance: 0.15, // Track A3 — a shot that clangs off the woodwork has
   // this small seeded chance of deflecting IN rather than staying out (still
   // pure/deterministic from the kick seed — real shootouts occasionally get this
@@ -460,6 +478,15 @@ const UI = {
     widthFrac: 0.46, // bar width / screen width
     heightFrac: 0.024, // bar height / screen height
     bottomFrac: 0.04, // gap from the bottom edge / screen height
+  },
+  // Scoreboard panel — RIGHT-ALIGNED at the top (owner request 2026-07-12) so it
+  // shares the top edge with the (smaller, hard-left) debug readout without
+  // overlapping. The DBG toggle button tucks in just below it.
+  scoreboard: {
+    widthFrac: 0.5, // panel width / screen width…
+    maxWidthPx: 240, // …capped so it never sprawls on wide screens
+    heightPx: 78,
+    marginPx: 6, // gap from the top + right screen edges
   },
   outcomeHoldMs: 1200, // how long the GOAL/SAVE/MISS banner stays up
   betweenKicksMs: 250, // small beat before the ball resets for the next kick
@@ -648,6 +675,8 @@ const JUICE = {
     catchSquashX: 1.16, // ball squash on catching (wider)
     catchSquashY: 0.82, // ...and flatter
     catchMs: 160, // squash + recover duration
+    vanishMs: 170, // keeper view (owner request 2026-07-12): after a save settles,
+    // the ball fades into the gloves (smothered) instead of lying in the box
     grazeReachMargin: 1.5, // Track B2 — a GOAL this close to reach still shows a
     // fingertip graze (small spark) even though it wasn't saved
   },
@@ -684,8 +713,12 @@ const DEBUG = {
   enabledByDefault: true, // show the overlay on load during development
   toggleKey: 'D', // keyboard toggle (desktop)
   showZoneLabels: false, // draw the faint 3x2 grid + TL/TM/… letters on the goal.
-  //  Off for the polished look (the live aim reticle already shows the target);
-  //  flip on as a tuning aid. Track C.
+  //  Off for the polished look; flip on as a tuning aid. Track C.
+  showAimGuide: false, // draw the aim line / crosshair reticle / scatter ring /
+  //  zone highlight while aiming. OFF for real play (owner, 2026-07-12: a visible
+  //  aim guide feels like a cheat — the swipe itself is the skill). Everything
+  //  still COMPUTES exactly as before (overlay + resolution read the same aim);
+  //  only the drawing is gated. Flip on as a tuning aid.
 } as const;
 
 // Single exported object — import { CONFIG } and read CONFIG.<group>.<value>.
