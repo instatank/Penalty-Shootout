@@ -483,10 +483,12 @@ const UI = {
   // shares the top edge with the (smaller, hard-left) debug readout without
   // overlapping. The DBG toggle button tucks in just below it.
   scoreboard: {
-    widthFrac: 0.5, // panel width / screen width…
-    maxWidthPx: 240, // …capped so it never sprawls on wide screens
-    heightPx: 78,
-    marginPx: 6, // gap from the top + right screen edges
+    widthFrac: 0.46, // panel width / screen width…
+    maxWidthPx: 230, // …capped so it never sprawls on wide screens
+    heightPx: 64, // compact (owner 2026-07-12b): in LANDSCAPE the crossbar sits
+    // high (~goalTopFrac·h ≈ 79px on-screen at base zoom) — the panel + debug box
+    // must fit ABOVE it, tucked into the corners, not overlap the goal frame.
+    marginPx: 4, // gap from the top + right screen edges
   },
   outcomeHoldMs: 1200, // how long the GOAL/SAVE/MISS banner stays up
   betweenKicksMs: 250, // small beat before the ball resets for the next kick

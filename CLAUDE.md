@@ -279,12 +279,27 @@ Five small owner-requested changes, shipped same day (owner pre-authorized the d
    longer draw during aiming (owner: felt like a cheat). Everything still COMPUTES —
    gate is `DEBUG.showAimGuide` (default false; flip on to tune). The finger swipe
    trail + power meter remain (input feedback, not target feedback).
-5. **HUD de-overlap:** debug readout is smaller (11px, word-wrapped, hard top-LEFT);
+5. **HUD de-overlap:** debug readout is smaller (10px, word-wrapped, hard top-LEFT);
    the scoreboard panel is **right-aligned** at the top (`CONFIG.UI.scoreboard`);
-   the DBG button tucks below the scoreboard. Verified portrait 390x844 + landscape.
+   the DBG button tucks below the scoreboard. Second pass (owner: still grazed the
+   goal frame): both boxes compacted further (scoreboard 64px tall, margins 4px)
+   so they sit fully ABOVE the landscape crossbar (~79px on-screen at base zoom).
+   Verified portrait 390x844 + landscape 844x390.
+6. **Orphaned-dive BUGFIX (owner bug report, same day — phantom saves):** resting
+   the finger on screen BEFORE the CPU struck, then flicking after, made the dive
+   ANIMATE but never SUBMIT — the mid-flight submit was gated on `sinceStrike >= 0`,
+   but `sinceStrike` uses the flick's START (finger-down) time, so a pre-strike
+   touchdown looked "early" even though the flick happened mid-flight. The arrival
+   deadline then judged a FROZEN centre keeper: goalie visibly dives one way, a
+   central ball is "saved" by the phantom centre reach, and the replay (which
+   replays the JUDGED dive) shows an unmoved keeper — exactly the owner's report.
+   Fix: gate on a `strikeFired` flag (has the strike actually happened), not the
+   timestamp's sign; negative timings are fine (resolver clamps to commit-at-strike).
+   Reproduced headless 6/6 pre-fix; 0 real orphans post-fix (per-kick `__kickSeq`
+   correlation; remaining frozen cases = genuinely-late flicks, honest no-dive).
 Verified headless 12/12 (corner rule incl. soft-shot-still-saveable + woodwork
 precedence + determinism; mid-gesture commit; save-vanish + alpha restore; timeScale
-restored) + screenshot review of both views/orientations. Dev hook added:
-`__penalty.getBallAlpha()`.
+restored) + screenshot review of both views/orientations. Dev hooks added:
+`__penalty.getBallAlpha()`, `__lastDiveCommit`, `__kickSeq`.
 
 ## Then — Phase 6 (online 2-player). Still later; the provider-swap keystone holds.

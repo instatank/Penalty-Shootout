@@ -30,14 +30,14 @@ export class DebugOverlay {
     // 2026-07-12: smaller + further left — the scoreboard owns the top-right).
     // Word-wrap caps its width so it can never grow under the scoreboard panel.
     this.bg = scene.add
-      .rectangle(4, 4, 220, 96, CONFIG.COLORS.debugBg, 0.55)
+      .rectangle(3, 3, 200, 80, CONFIG.COLORS.debugBg, 0.55)
       .setOrigin(0, 0);
     this.text = scene.add
-      .text(9, 9, '', {
+      .text(7, 7, '', {
         fontFamily: 'monospace',
-        fontSize: '11px',
+        fontSize: '10px',
         color: '#' + CONFIG.COLORS.debugText.toString(16).padStart(6, '0'),
-        lineSpacing: 2,
+        lineSpacing: 1,
         wordWrap: { width: this.wrapWidth(scene.scale.width) },
       })
       .setOrigin(0, 0);
@@ -48,11 +48,11 @@ export class DebugOverlay {
     // Always-present tap target so the overlay can be toggled on a phone.
     // Anchored to the live right edge, tucked BELOW the right-aligned scoreboard
     // panel (which now owns the top-right corner).
-    const btnY = CONFIG.UI.scoreboard.marginPx + CONFIG.UI.scoreboard.heightPx + 8;
+    const btnY = CONFIG.UI.scoreboard.marginPx + CONFIG.UI.scoreboard.heightPx + 6;
     this.button = scene.add
-      .text(scene.scale.width - 8, btnY, 'DBG', {
+      .text(scene.scale.width - 6, btnY, 'DBG', {
         fontFamily: 'monospace',
-        fontSize: '18px',
+        fontSize: '15px',
         color: '#ffffff',
         backgroundColor: '#00000088',
         padding: { x: 8, y: 6 },
@@ -69,7 +69,7 @@ export class DebugOverlay {
     // Keep the button pinned to the right edge (and the readout's wrap width in
     // step) when the screen size changes.
     const reanchor = (size: Phaser.Structs.Size) => {
-      this.button.setX(size.width - 8);
+      this.button.setX(size.width - 6);
       this.text.setWordWrapWidth(this.wrapWidth(size.width));
       if (this.visible) this.render();
     };
@@ -102,13 +102,16 @@ export class DebugOverlay {
   /** Cap the readout's text width so the box stays clear of the right-aligned
    *  scoreboard even on a narrow portrait phone. */
   private wrapWidth(screenW: number): number {
-    return Math.min(screenW * 0.38, 250);
+    // 0.44: wide enough that the idle lines don't wrap on a 390px phone, while
+    // the box (wrap + padding) still clears the right-aligned scoreboard panel
+    // (which starts at ~0.53 of the width there).
+    return Math.min(screenW * 0.44, 230);
   }
 
   private render(): void {
     this.text.setText(this.lines.join('\n'));
     // Grow the backdrop to fit the (wrapped) text.
-    this.bg.width = Math.max(140, this.text.width + 10);
-    this.bg.height = Math.max(28, this.text.height + 10);
+    this.bg.width = Math.max(120, this.text.width + 8);
+    this.bg.height = Math.max(24, this.text.height + 8);
   }
 }

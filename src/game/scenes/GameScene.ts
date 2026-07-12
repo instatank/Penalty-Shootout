@@ -92,6 +92,7 @@ export class GameScene extends Phaser.Scene {
   // Keeper-mode reaction state: when the strike happens (timing reference) and the
   // dive the human committed this window (null until they flick).
   private strikeAt = 0;
+  private strikeFired = false; // true once the CPU's strike callback has run (this kick)
   private diveCaptured: { zone: ZoneId; timing: number } | null = null;
   // Keeper-view flight bookkeeping (Track A1): the flight's END is a mutable
   // point so a mid-flight save can bend the last stretch into the gloves (the
@@ -953,8 +954,8 @@ export class GameScene extends Phaser.Scene {
     // left): a rounded dark panel (Track C — lifts the HUD off the busy stadium)
     // holding the score line, kick dots, and phase/round line.
     this.scorePanel = this.add.graphics();
-    this.scoreText = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '18px', color: '#ffffff' }).setOrigin(0.5, 0);
-    this.scoreSub = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '11px', color: '#9fb8d8' }).setOrigin(0.5, 0);
+    this.scoreText = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontStyle: 'bold', fontSize: '15px', color: '#ffffff' }).setOrigin(0.5, 0);
+    this.scoreSub = this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '10px', color: '#9fb8d8' }).setOrigin(0.5, 0);
     this.scoreDots = this.add.graphics();
     this.scoreboard = this.add.container(0, 0, [this.scorePanel, this.scoreText, this.scoreDots, this.scoreSub]).setDepth(960).setScrollFactor(0).setVisible(false);
 
@@ -990,11 +991,11 @@ export class GameScene extends Phaser.Scene {
     const g = this.scorePanel;
     g.clear();
     g.fillStyle(0x0a1526, 0.74);
-    g.fillRoundedRect(panelX, panelY, panelW, panelH, 14);
+    g.fillRoundedRect(panelX, panelY, panelW, panelH, 12);
     g.lineStyle(1.5, 0x3a6ea5, 0.5);
-    g.strokeRoundedRect(panelX, panelY, panelW, panelH, 14);
-    this.scoreText.setScale(1).setPosition(this.scoreCX, panelY + 6); // reset any in-flight score pop
-    this.scoreSub.setPosition(this.scoreCX, panelY + 30);
+    g.strokeRoundedRect(panelX, panelY, panelW, panelH, 12);
+    this.scoreText.setScale(1).setPosition(this.scoreCX, panelY + 4); // reset any in-flight score pop
+    this.scoreSub.setPosition(this.scoreCX, panelY + 23);
     this.endBg.setPosition(w / 2, h / 2).setSize(w, h);
     this.endTitle.setPosition(w / 2, h * 0.4);
     this.endScore.setPosition(w / 2, h * 0.4 + 52);
@@ -1042,8 +1043,8 @@ export class GameScene extends Phaser.Scene {
     const s = this.shootout;
     const cx = this.scoreCX || this.scale.width / 2; // follow the right-aligned panel
     const slots = Math.max(s.regulationKicks, s.player.taken, s.opponent.taken);
-    const gap = 15;
-    const r = 5;
+    const gap = 13;
+    const r = 4;
     const rowW = (slots - 1) * gap;
     const drawRow = (results: boolean[], taken: number, y: number) => {
       for (let i = 0; i < slots; i++) {
@@ -1057,8 +1058,8 @@ export class GameScene extends Phaser.Scene {
         }
       }
     };
-    drawRow(s.player.results, s.player.taken, CONFIG.UI.scoreboard.marginPx + 48);
-    drawRow(s.opponent.results, s.opponent.taken, CONFIG.UI.scoreboard.marginPx + 64);
+    drawRow(s.player.results, s.player.taken, CONFIG.UI.scoreboard.marginPx + 40);
+    drawRow(s.opponent.results, s.opponent.taken, CONFIG.UI.scoreboard.marginPx + 53);
   }
 
   private showEndScreen(winner: Side): void {
@@ -1203,10 +1204,26 @@ export class GameScene extends Phaser.Scene {
 
     // Commit the dive to the loop IMMEDIATELY (mid-flight) so the kick resolves
     // while the ball is in the air and the flight can end honestly — gloves on a
-    // save, net on a goal (Track A1). Pre-strike commits are held and submitted
-    // by the strike callback (the race doesn't exist yet).
-    if (sinceStrike >= 0 && this.human.isAwaitingKeeper()) {
+    // save, net on a goal (Track A1). Only commits CAPTURED before the strike are
+    // held (and submitted by the strike callback — the race doesn't exist yet).
+    // BUGFIX (owner report 2026-07-12): gate on whether the STRIKE has happened,
+    // NOT on sinceStrike's sign. sinceStrike uses the flick's START (finger-down)
+    // time, so a finger resting on the screen before the strike made a post-strike
+    // flick look "early" — it was captured + animated but never submitted, and the
+    // arrival deadline then judged a FROZEN centre keeper: the goalie visibly dove
+    // one way, a central ball was "saved" by the phantom centre reach, and the
+    // replay showed the (judged) unmoved keeper. A negative sinceStrike is fine to
+    // submit — resolvePenalty clamps it to a commit AT the strike (full dive).
+    if (this.strikeFired && this.human.isAwaitingKeeper()) {
       this.human.submitDive(zone, sinceStrike);
+    }
+    // Dev-only trace of what this commit saw — for headless verification of the
+    // orphaned-dive bugfix above (stripped from production).
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__lastDiveCommit = {
+        zone, sinceStrike, phase, strikeFired: this.strikeFired, awaiting: this.human.isAwaitingKeeper(),
+        seq: (window as unknown as Record<string, number>).__kickSeq,
+      };
     }
 
     this.debug.setLines([
@@ -1420,9 +1437,14 @@ export class GameScene extends Phaser.Scene {
     const flightMs = kickFlightMs(taker.power, 'keeper');
 
     this.diveCaptured = null;
+    this.strikeFired = false; // fresh kick — the strike hasn't happened yet
     this.keeperFlightEnd = null;
     this.keeperFlightDone = null;
     this.state = 'busy'; // not diveable yet — the "set" beat
+    if (import.meta.env.DEV) {
+      const w = window as unknown as Record<string, number>;
+      w.__kickSeq = (w.__kickSeq ?? 0) + 1; // headless: correlate commits/results per kick
+    }
     this.fx.clear();
 
     // Dev-only: expose the committed CPU shot for headless tests (stripped from prod).
@@ -1464,6 +1486,7 @@ export class GameScene extends Phaser.Scene {
     // the dive resolves a save mid-flight, the last stretch bends into the gloves.
     this.time.delayedCall(CONFIG.KEEPER.readyMs + C.tellLeadTime, () => {
       this.strikeAt = performance.now(); // the REAL strike moment (Track A4)
+      this.strikeFired = true; // from here, captured dives submit immediately
       this.arrivalAt = this.strikeAt + flightMs;
       this.releaseHush();
       this.kickTakerFigure(tellSide);
@@ -2048,11 +2071,10 @@ export class GameScene extends Phaser.Scene {
     const l = this.layout;
     const keeperMode = this.mode === 'keeper';
     this.debug.setLines([
-      'PENALTY SHOOTOUT',
-      'Milestone 5 — ' + (keeperMode ? 'Keeper mode (you save)' : 'Taker mode (you shoot)'),
+      'PENALTY SHOOTOUT — ' + (keeperMode ? 'you save' : 'you shoot'),
       (l.isLandscape ? 'landscape' : 'portrait') + ' ' + Math.round(l.width) + 'x' + Math.round(l.height),
-      keeperMode ? 'read the striker → swipe to dive' : 'swipe to shoot →  beat the keeper',
-      'tap MODE to switch · DBG to hide',
+      keeperMode ? 'read the striker → swipe to dive' : 'swipe to shoot → beat the keeper',
+      'MODE to switch · DBG to hide',
     ]);
   }
 

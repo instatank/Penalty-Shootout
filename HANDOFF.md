@@ -311,12 +311,20 @@ Five owner-requested changes (full detail in CLAUDE.md "Feel & HUD tweaks"):
 4. **Aim guide hidden in play** — aim line/reticle/ring/zone highlight gated behind
    `DEBUG.showAimGuide` (default OFF; the C5 curved guide still exists as a tuning aid).
    Swipe trail + power meter kept. `drawLandingMarker` gated too.
-5. **HUD de-overlap** — debug readout compact (11px, word-wrap ≤ min(38% width, 250px),
+5. **HUD de-overlap** — debug readout compact (10px, word-wrap ≤ min(44% width, 230px),
    hard top-left); scoreboard **right-aligned** top (`CONFIG.UI.scoreboard`); DBG button
-   below it. Checked portrait 390x844 + landscape 844x390.
-Verified headless 12/12 + screenshots. New dev hook: `__penalty.getBallAlpha()`.
-Tuning knobs: `KEEPER.commitDistFrac`, `RESOLUTION.corner.*`, `JUICE.parry.vanishMs`,
-`UI.scoreboard.*`, `DEBUG.showAimGuide`.
+   below it. Second pass after owner feedback: both boxes compacted further (panel 64px,
+   margins 4px) to sit fully ABOVE the landscape crossbar. Checked both orientations.
+6. **Orphaned-dive bugfix (owner bug report — phantom saves)** — a finger resting on
+   screen before the strike + a post-strike flick animated a dive that was never
+   SUBMITTED (submit was gated on `sinceStrike >= 0`, which uses finger-DOWN time);
+   the arrival deadline then judged a frozen centre keeper → wrong-way "saves", and the
+   replay showed the judged (unmoved) keeper. Fixed with a `strikeFired` flag; negative
+   timings submit fine (resolver clamps to commit-at-strike). Repro: 6/6 orphaned
+   pre-fix → 0 post-fix (kick-seq-correlated headless test).
+Verified headless 12/12 + screenshots. New dev hooks: `__penalty.getBallAlpha()`,
+`__lastDiveCommit`, `__kickSeq`. Tuning knobs: `KEEPER.commitDistFrac`,
+`RESOLUTION.corner.*`, `JUICE.parry.vanishMs`, `UI.scoreboard.*`, `DEBUG.showAimGuide`.
 
 ## Deploy note — how "live" works here
 There is no `main`/`master`. The repo default (and Vercel production) branch is
