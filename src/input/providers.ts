@@ -24,6 +24,39 @@ export interface PenaltyContext {
   goal: Rect; // live goal mouth
 }
 
+// ── Difficulty lerps (owner 2026-07-15) ─────────────────────────────────────
+// ONE 0..1 difficulty knob (CONFIG.CPU_KEEPER.difficulty / the EASY-MED-HARD
+// button) now scales BOTH CPUs: the keeper you shoot against AND the taker you
+// defend against. These small pure helpers keep the lerp in one place — the
+// provider uses them for behaviour, the scene for the matching visuals (tell
+// lean size, replayed dive timing).
+
+function lerpByDifficulty(easy: number, hard: number, difficulty: number): number {
+  const d = difficulty < 0 ? 0 : difficulty > 1 ? 1 : difficulty;
+  return easy + (hard - easy) * d;
+}
+
+/** ms after the strike the CPU keeper commits its dive (hard = snappier). */
+export function cpuKeeperReactionMs(difficulty: number): number {
+  const k = CONFIG.CPU_KEEPER;
+  return lerpByDifficulty(k.reactionDelayEasy, k.reactionDelayHard, difficulty);
+}
+
+/** How obvious the CPU taker's pre-strike body lean is (hard = subtler). */
+export function cpuTellStrength(difficulty: number): number {
+  const c = CONFIG.CPU_TAKER;
+  return lerpByDifficulty(c.tellStrengthEasy, c.tellStrengthHard, difficulty);
+}
+
+/** The CPU taker's release-power range (hard = faster shots = shorter windows). */
+export function cpuTakerPowerRange(difficulty: number): { min: number; max: number } {
+  const c = CONFIG.CPU_TAKER;
+  return {
+    min: lerpByDifficulty(c.powerMinEasy, c.powerMinHard, difficulty),
+    max: lerpByDifficulty(c.powerMaxEasy, c.powerMaxHard, difficulty),
+  };
+}
+
 export interface InputProvider {
   // null = the wait was cancelled (e.g. a resize) and the loop should retry.
   getTakerInput(ctx: PenaltyContext): Promise<TakerInput | null>;
@@ -127,7 +160,9 @@ export class LocalHumanProvider implements InputProvider {
  */
 export class CpuProvider implements InputProvider {
   /** Live difficulty override (0..1). Falls back to CONFIG.CPU_KEEPER.difficulty.
-   *  Lets the owner change difficulty on the fly while playtesting (Phase 2). */
+   *  Lets the owner change difficulty on the fly while playtesting (Phase 2).
+   *  Drives BOTH roles (2026-07-15): the keeper's read/reaction AND the taker's
+   *  shot pace + tell subtlety. */
   difficulty?: number;
 
   getKeeperInput(ctx: PenaltyContext, taker: TakerInput): Promise<KeeperInput | null> {
@@ -160,12 +195,13 @@ export class CpuProvider implements InputProvider {
     }
     const diveZone = zoneFrom(guessCol, guessRow);
 
-    // The CPU commits its dive a beat after the strike (reactionDelay ± jitter).
-    // Since Track A2 this commit moment is judged by resolvePenalty as the start
+    // The CPU commits its dive a beat after the strike (difficulty-lerped
+    // reaction ± jitter — a hard keeper snaps, an easy one hesitates). Since
+    // Track A2 this commit moment is judged by resolvePenalty as the start
     // of the hands' travel, RACING the ball's flight — so a blasted shot arrives
     // before the hands do, while a soft shot gives them time. Beatability is now
     // direction + corners + genuine shot speed.
-    const diveTiming = k.reactionDelay + (seededRandom(ctx.seed, 11) * 2 - 1) * k.timingJitterMs;
+    const diveTiming = cpuKeeperReactionMs(difficulty) + (seededRandom(ctx.seed, 11) * 2 - 1) * k.timingJitterMs;
 
     return Promise.resolve({ diveZone, diveTiming });
   }
@@ -173,12 +209,17 @@ export class CpuProvider implements InputProvider {
   // ── CPU as TAKER (Milestone 5) ─────────────────────────────────────────────
   getTakerInput(ctx: PenaltyContext): Promise<TakerInput | null> {
     const c = CONFIG.CPU_TAKER;
+    // The SAME difficulty knob that tunes the CPU keeper also tunes how the CPU
+    // shoots AT you (owner 2026-07-15): harder = faster shots (shorter reaction
+    // windows — the power range lerps up, and power drives kickFlightMs).
+    const difficulty = this.difficulty ?? CONFIG.CPU_KEEPER.difficulty;
 
     // 1) Pick a target zone by the weighted distribution (corners favoured).
     const targetZone = this.pickWeightedZone(c.targetWeights, seededRandom(ctx.seed, 20));
 
-    // 2) Pick power and a small curve, seeded.
-    const power = c.powerMin + (c.powerMax - c.powerMin) * seededRandom(ctx.seed, 21);
+    // 2) Pick power (within the difficulty-lerped range) and a small curve, seeded.
+    const { min: pMin, max: pMax } = cpuTakerPowerRange(difficulty);
+    const power = pMin + (pMax - pMin) * seededRandom(ctx.seed, 21);
     const curve = (seededRandom(ctx.seed, 22) * 2 - 1) * c.curveJitter;
 
     // 3) Land it deterministically (same scatter rule as a human shot).

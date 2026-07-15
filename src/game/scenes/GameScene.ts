@@ -23,7 +23,7 @@ import { NetSim } from '../net/NetSim';
 import { computeAim, computeDive, shotOutcome, landShot, scatterRadius } from '../aim';
 import { resolvePenalty, kickFlightMs, type PenaltyResult, type TakerInput, type KeeperInput } from '../resolve';
 import { createShootout, recordKick, currentRound, type ShootoutState, type Side } from '../shootout';
-import { LocalHumanProvider, CpuProvider, type InputProvider, type PenaltyContext } from '../../input/providers';
+import { LocalHumanProvider, CpuProvider, cpuKeeperReactionMs, cpuTellStrength, type InputProvider, type PenaltyContext } from '../../input/providers';
 import { SwipeInput, deriveSwipe, type SwipePhase, type SwipePoint } from '../../input/SwipeInput';
 import { DebugOverlay } from '../../ui/DebugOverlay';
 import { Sfx } from '../../audio/Sfx';
@@ -666,8 +666,10 @@ export class GameScene extends Phaser.Scene {
     const scaleStart = keeperMode ? CONFIG.KEEPER.flightScaleStart : CONFIG.FLIGHT.scaleStart;
     const scaleEnd = keeperMode ? CONFIG.KEEPER.flightScaleEnd : CONFIG.FLIGHT.scaleEnd;
 
-    // Re-dive the keeper to the same point, slowed.
-    this.time.delayedCall(CONFIG.CPU_KEEPER.reactionDelay * R.slowFactor, () =>
+    // Re-dive the keeper to the same point, slowed. (The difficulty-lerped
+    // reaction is the same commit moment the live CPU keeper used.)
+    const replayReactMs = cpuKeeperReactionMs(this.cpu.difficulty ?? CONFIG.CPU_KEEPER.difficulty);
+    this.time.delayedCall(replayReactMs * R.slowFactor, () =>
       this.diveKeeperTo(handX, handY, CONFIG.CPU_KEEPER.diveDuration * R.slowFactor, result.timingQuality),
     );
 
@@ -1721,10 +1723,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** The pre-strike tell: lean the striker toward the shot side (PRD §6). The
-   *  lean is scaled by tellStrength so it stays subtle. */
+   *  lean is scaled by the difficulty-lerped tell strength (owner 2026-07-15):
+   *  an EASY striker telegraphs the side, a HARD one is barely readable. */
   private showTakerTell(side: number): void {
     const C = CONFIG.CPU_TAKER;
-    const lean = Phaser.Math.Clamp(side * 2, -1, 1) * C.tellLeanMaxRad * C.tellStrength;
+    const tell = cpuTellStrength(this.cpu.difficulty ?? CONFIG.CPU_KEEPER.difficulty);
+    const lean = Phaser.Math.Clamp(side * 2, -1, 1) * C.tellLeanMaxRad * tell;
     this.tweens.add({ targets: this.takerFigure, rotation: lean, duration: C.tellLeadTime, ease: 'Sine.easeInOut' });
   }
 

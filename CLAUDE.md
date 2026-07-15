@@ -302,4 +302,41 @@ precedence + determinism; mid-gesture commit; save-vanish + alpha restore; timeS
 restored) + screenshot review of both views/orientations. Dev hooks added:
 `__penalty.getBallAlpha()`, `__lastDiveCommit`, `__kickSeq`.
 
+## Keeper-difficulty rebalance (owner feedback 2026-07-15) — DONE (awaiting owner playtest ⏸)
+Owner: (1) MED vs HARD felt identical; (2) keeper (defending) mode too easy even on
+HARD — you could wait, watch the ball, and still save. Root causes + fixes:
+- **Difficulty now drives BOTH CPUs.** The EASY/MED/HARD button previously only
+  scaled the CPU *keeper* (your taking turns) — your defending turns were identical
+  on every difficulty. The same 0..1 knob now also lerps the CPU **taker**:
+  release-power range (`CPU_TAKER.powerMinEasy/Hard`, `powerMaxEasy/Hard` — hard =
+  faster shots = shorter reaction windows; `powerMinHard` 0.85 on purpose so HARD
+  has no slow shots to camp on) and tell obviousness (`tellStrengthEasy` 0.85 →
+  `tellStrengthHard` 0.3). Lerp helpers live in `input/providers.ts`
+  (`cpuTakerPowerRange`/`cpuTellStrength`/`cpuKeeperReactionMs`) — the provider uses
+  them for behaviour, the scene for the matching visuals (tell lean, replay dive).
+- **The race is tighter.** `RESOLUTION.diveTravelMs` 420 → **520** and
+  `CPU_TAKER.flightTimeFast` 620 → **540**: the post-strike window where a dive
+  still fully arrives shrank from ~220–330ms to ~55–160ms on HARD, and partial
+  dives fall visibly shorter. `CPU_KEEPER.diveDuration` kept = diveTravelMs (520).
+- **CPU keeper (your taking turns) separates too:** reaction is difficulty-lerped
+  (`reactionDelayEasy` 230 → `reactionDelayHard` 110, replaces fixed 160) — an EASY
+  keeper's hesitation is genuinely beatable with pace; presets widened
+  (easy .2/med .5/hard .9) and read accuracy caps raised (guess .92 / row .95).
+- **Verified headless 20/20** (real compiled `CpuProvider`+`resolvePenalty`, no
+  re-implementation — script pattern: tsc-compile the pure modules to CJS, run node):
+  with a PERFECT zone read every time, HARD corner-zone saves fall 82% → 60% → 30%
+  as the commit slips 120ms → 250ms → 330ms (was ~100% at all three before);
+  EASY 98% / MED 75% at 330ms (clear difficulty separation); middle-column shots
+  stay saveable by a waiting keeper (physically honest — ~23% of CPU shots);
+  wrong-side dives still concede; determinism keystone intact. Plus in-game smoke
+  (real CDP input): full taker kick + defended CPU kick on HARD, dive capture →
+  race → judged hands all clean, timeScale restored, no errors.
+- **Headless gotcha addendum:** drive swipes with **real `page.mouse` CDP events**
+  — synthetic `dispatchEvent` PointerEvents reached SwipeInput but flaked at the
+  release/submit step in this container (contradicts the older note below).
+- ⏸ Playtest knobs: the `*Easy/*Hard` pairs above, `RESOLUTION.diveTravelMs`,
+  `CPU_TAKER.flightTimeFast/Slow`. If HARD feels brutal, lower `powerMinHard`
+  (more soft shots to react to) before touching `diveTravelMs` (shared with taker
+  mode). Dev hook unchanged: `__penalty.setKeeperDifficulty(0..1)` (drives both CPUs).
+
 ## Then — Phase 6 (online 2-player). Still later; the provider-swap keystone holds.

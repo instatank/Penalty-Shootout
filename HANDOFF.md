@@ -39,10 +39,13 @@ clashes).
 > **`docs/design-rework-plan.md` is fully executed and LIVE**, and the owner's
 > 2026-07-12 feel/HUD tweak batch (keeper mid-gesture dive commit, save smothers the
 > ball, unsaveable pace+placement corners, hidden aim guide, right-aligned scoreboard
-> + compact debug box) is also LIVE — see CLAUDE.md "Feel & HUD tweaks". There is no
-> queued build work — the next session likely responds to owner on-device playtest
-> feedback (tuning knobs are documented per track below), or moves on to Phase 6
-> (online 2-player).
+> + compact debug box) is also LIVE — see CLAUDE.md "Feel & HUD tweaks". The
+> **2026-07-15 keeper-difficulty rebalance** (owner: defending too easy + MED/HARD
+> indistinguishable → one difficulty knob now drives BOTH CPUs; tighter dive-vs-ball
+> race) is built on branch `claude/goalkeeper-difficulty-balance-7q4g1m` and is
+> **⏸ awaiting owner playtest** — see CLAUDE.md "Keeper-difficulty rebalance" for the
+> what/why and the playtest knobs. After that, the likely next step is more playtest
+> tuning or Phase 6 (online 2-player).
 
 ---
 
