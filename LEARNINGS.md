@@ -37,3 +37,12 @@ Concept cards appended by `/wrap`. Format + method: `playbook/LEARNING_METHOD.md
 - Where else: (pending — answer at next wrap)
 - Quiz question: "The live action and its replay show two different things — which one is the truth the game scored, and what does the disagreement itself tell you?"
 - Internalized: no
+
+### 2026-07-15 — The repo's own testing notes pointed the wrong way (stale recipe)
+
+- What happened: CLAUDE.md's headless gotchas said swipes are "best driven with dispatchEvent PointerEvents on the canvas". This session those synthetic swipes reached the input layer (the live aim updated) but silently failed at the final release/submit step, and debugging time went into suspecting the game code before suspecting the recipe. Real CDP input (`page.mouse`) worked first try. The note was written in an earlier session/container where the synthetic route happened to work. Fixed in place: CLAUDE.md now says to drive swipes with real `page.mouse` events.
+- Concept: notes about HOW to test are themselves code that goes stale — a "known good" recipe is only known-good in the environment it was written in. When a documented recipe fails, make the recipe a suspect as early as the code, and once disproven, correct the doc immediately so the trap doesn't reload for the next session.
+- In my words: (pending — answer at next wrap)
+- Where else: (pending — answer at next wrap)
+- Quiz question: "A step-by-step testing recipe from your own project docs fails today — name the two suspects, and the one most people forget to check."
+- Internalized: no
