@@ -334,6 +334,19 @@ HARD — you could wait, watch the ball, and still save. Root causes + fixes:
 - **Headless gotcha addendum:** drive swipes with **real `page.mouse` CDP events**
   — synthetic `dispatchEvent` PointerEvents reached SwipeInput but flaked at the
   release/submit step in this container (contradicts the older note below).
+- **Second pass (owner playtest feedback, same day):** still too easy to watch-
+  then-save on HARD, and the whole ladder should shift "one notch higher — the
+  current hard could be medium". Done exactly that: presets now **easy 0.5 (= the
+  old medium) / medium 0.9 (= the old hard) / hard 1.0 (new top rung)**, and the
+  difficulty-1 endpoints got meaner so hard is a genuine step above medium:
+  `powerMinHard` 0.85 → **0.9** (hard flights are all 540–576ms), `tellStrengthHard`
+  0.3 → **0.25**, `RESOLUTION.diveTravelMs` 520 → **550** (+ `CPU_KEEPER.diveDuration`
+  = 550), with `reactionDelayHard` 110 → **95** so your own SHOOTING turns didn't
+  get collaterally easier from the slower hands. Re-verified 20/20 + smoke; the
+  measured corner-save ladder (perfect read) is now monotonic by tier AND by
+  reaction speed: EASY 95/93/62%, MED 82/49/23%, HARD 75/42/20% at commit
+  120/250/330ms. Middle-column shots stay mostly standable (71% on hard — max-pace
+  scatter honestly drifts some off your line).
 - ⏸ Playtest knobs: the `*Easy/*Hard` pairs above, `RESOLUTION.diveTravelMs`,
   `CPU_TAKER.flightTimeFast/Slow`. If HARD feels brutal, lower `powerMinHard`
   (more soft shots to react to) before touching `diveTravelMs` (shared with taker

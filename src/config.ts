@@ -320,12 +320,13 @@ const FLIGHT = {
 const CPU_KEEPER = {
   // Difficulty is the simple parameter to change (Phase 2). 0..1 master knob —
   // ONE knob now drives BOTH CPUs (owner 2026-07-15): this keeper on your taking
-  // turns AND the CPU_TAKER lerps below on your defending turns. Presets spread
-  // wider (MED vs HARD previously felt the same): EASY 0.2 (poor reads, slow
-  // reaction, soft telegraphed shots to face), HARD 0.9 (near-perfect reads,
-  // sharp reaction, fast subtle shots against you).
+  // turns AND the CPU_TAKER lerps below on your defending turns. Presets shifted
+  // a full notch UP (owner playtest 2026-07-15b: the whole ladder was too easy —
+  // "the current hard could be medium"): EASY 0.5 = the old medium, MEDIUM 0.9 =
+  // the old hard, HARD 1.0 = a new top rung (all shots near max pace, faintest
+  // tell, snap keeper) that punishes watch-the-ball dives.
   difficulty: 0.5,
-  presets: { easy: 0.2, medium: 0.5, hard: 0.9 }, // the selectable difficulty levels
+  presets: { easy: 0.5, medium: 0.9, hard: 1.0 }, // the selectable difficulty levels
   // Zone-guess accuracy is lerp(min,max) by difficulty (chance of reading the
   // right column). Kept modest so well-placed corners beat the keeper.
   guessAccuracyMin: 0.25, // column (left/right) read accuracy, lerp by difficulty
@@ -339,8 +340,10 @@ const CPU_KEEPER = {
   // so an EASY keeper's hesitation makes it genuinely beatable with pace, while a
   // HARD keeper's snap commit means only true corners/blasts get past a good read.
   reactionDelayEasy: 230, // commit delay at difficulty 0 (hesitant)
-  reactionDelayHard: 110, // commit delay at difficulty 1 (snap reaction)
-  diveDuration: 520, // ms for a FULL dive animation (kept = RESOLUTION.diveTravelMs
+  reactionDelayHard: 95, // commit delay at difficulty 1 (snap reaction) — trimmed
+  //  110 → 95 (2026-07-15b) to offset the slower diveTravelMs below, so the CPU
+  //  keeper's arrival vs a blasted shot stays roughly where it was per difficulty
+  diveDuration: 550, // ms for a FULL dive animation (kept = RESOLUTION.diveTravelMs
   //  so the animated dive and the judged hand-travel agree)
 } as const;
 
@@ -356,7 +359,7 @@ const CPU_TAKER = {
   // a hard one is nearly unreadable — a sharp player reads it, a casual one
   // shoots blind (PRD §6).
   tellStrengthEasy: 0.85, // lean obviousness at difficulty 0
-  tellStrengthHard: 0.3, // ...at difficulty 1 (barely readable)
+  tellStrengthHard: 0.25, // ...at difficulty 1 (barely readable)
   tellLeanMaxRad: 0.4, // body-lean angle at tellStrength=1 (radians) — the visual size of a full tell
   tellLeadTime: 350, // ms the tell (body lean) shows BEFORE the strike
   // Ball speed BY POWER = your reaction window (Track A2). The CPU's release
@@ -374,8 +377,8 @@ const CPU_TAKER = {
   // CPU hits soft-to-firm (long reaction windows), a hard CPU firm-to-flat-out
   // (short windows). Power still varies shot to shot within the lerped range.
   powerMinEasy: 0.35, // power floor at difficulty 0
-  powerMinHard: 0.85, // ...at difficulty 1 — high on purpose: a hard CPU has no
-  //  slow shots to camp on, so "wait and watch" reliably arrives too late there
+  powerMinHard: 0.9, // ...at difficulty 1 — very high on purpose: a hard CPU has
+  //  no slow shots to camp on, so "wait and watch" reliably arrives too late there
   powerMaxEasy: 0.65, // power ceiling at difficulty 0
   powerMaxHard: 1.0, // ...at difficulty 1
   curveJitter: 0.1, // small random bend (±) so flights are not all dead straight
@@ -439,13 +442,13 @@ const RESOLUTION = {
   // (Replaces the old strike-anchored diveLateWindowMs, which punished dives
   // that visibly completed before a slow ball arrived, and let the CPU keeper
   // always "get there" regardless of shot speed.)
-  diveTravelMs: 520, // hands' travel time centre → dive target (a full dive).
-  // Raised 420 → 520 (owner 2026-07-15: keeper mode too easy — you could watch
-  // most of the flight and still fully arrive). Slower hands shrink the post-
-  // strike window in which a dive still reaches full stretch, so on HARD a
-  // near-perfectly-timed dive saves but a fractionally-late one falls short
-  // (verified: a correct-read dive committed ~120ms after a hard strike still
-  // saves ~90%; waiting ~330ms to watch the ball collapses to ~25%).
+  diveTravelMs: 550, // hands' travel time centre → dive target (a full dive).
+  // Raised 420 → 520 → 550 (owner 2026-07-15, twice: keeper mode too easy — you
+  // could watch most of the flight and still fully arrive). Slower hands shrink
+  // the post-strike window in which a dive still reaches full stretch, so on the
+  // upper difficulties a near-perfectly-timed dive saves but a fractionally-late
+  // one falls short. (CPU_KEEPER.reactionDelayHard was trimmed alongside so your
+  // own shooting turns didn't get collaterally easier.)
   powerReachPenalty: 0.2, // a hard shot ALSO shrinks reach by up to this (× power)
   margin: 0.05, // soft save/goal band at the very edge of reach (seeded tie-break).
   // Shrunk from 0.18 (Track A5) — now that saves/misses/woodwork all read
